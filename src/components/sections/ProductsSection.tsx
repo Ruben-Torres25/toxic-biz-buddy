@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,8 +13,10 @@ import {
   AlertTriangle,
   Package
 } from "lucide-react";
+import { NewProductModal } from "@/components/modals/NewProductModal";
 
 export const ProductsSection = () => {
+  const [isNewProductOpen, setIsNewProductOpen] = useState(false);
   const products = [
     {
       id: "PROD001",
@@ -70,7 +73,10 @@ export const ProductsSection = () => {
           <h1 className="text-3xl font-bold text-foreground">Gestión de Productos</h1>
           <p className="text-muted-foreground">Controla tu inventario y precios de productos</p>
         </div>
-        <Button className="bg-gradient-to-r from-primary to-primary-hover hover:from-primary-hover hover:to-primary">
+        <Button 
+          onClick={() => setIsNewProductOpen(true)}
+          className="bg-gradient-to-r from-primary to-primary-hover hover:from-primary-hover hover:to-primary"
+        >
           <Plus className="w-4 h-4 mr-2" />
           Nuevo Producto
         </Button>
@@ -204,6 +210,8 @@ export const ProductsSection = () => {
           </div>
         </CardContent>
       </Card>
+
+      <NewProductModal open={isNewProductOpen} onOpenChange={setIsNewProductOpen} />
     </div>
   );
 };

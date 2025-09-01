@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,8 +14,10 @@ import {
   Clock,
   XCircle
 } from "lucide-react";
+import { NewOrderModal } from "@/components/modals/NewOrderModal";
 
 export const OrdersSection = () => {
+  const [isNewOrderOpen, setIsNewOrderOpen] = useState(false);
   const orders = [
     {
       id: "PED001",
@@ -70,7 +73,10 @@ export const OrdersSection = () => {
           <h1 className="text-3xl font-bold text-foreground">Gestión de Pedidos</h1>
           <p className="text-muted-foreground">Administra todos los pedidos de tus clientes</p>
         </div>
-        <Button className="bg-gradient-to-r from-primary to-primary-hover hover:from-primary-hover hover:to-primary">
+        <Button 
+          onClick={() => setIsNewOrderOpen(true)}
+          className="bg-gradient-to-r from-primary to-primary-hover hover:from-primary-hover hover:to-primary"
+        >
           <Plus className="w-4 h-4 mr-2" />
           Nuevo Pedido
         </Button>
@@ -143,6 +149,8 @@ export const OrdersSection = () => {
           </div>
         </CardContent>
       </Card>
+
+      <NewOrderModal open={isNewOrderOpen} onOpenChange={setIsNewOrderOpen} />
     </div>
   );
 };

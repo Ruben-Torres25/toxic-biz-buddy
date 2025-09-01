@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,8 +16,10 @@ import {
   Truck,
   Package
 } from "lucide-react";
+import { NewSupplierModal } from "@/components/modals/NewSupplierModal";
 
 export const SuppliersSection = () => {
+  const [isNewSupplierOpen, setIsNewSupplierOpen] = useState(false);
   const suppliers = [
     {
       id: "SUP001",
@@ -87,7 +90,10 @@ export const SuppliersSection = () => {
             <Package className="w-4 h-4 mr-2" />
             Registrar Mercadería
           </Button>
-          <Button className="bg-gradient-to-r from-primary to-primary-hover hover:from-primary-hover hover:to-primary">
+          <Button 
+            onClick={() => setIsNewSupplierOpen(true)}
+            className="bg-gradient-to-r from-primary to-primary-hover hover:from-primary-hover hover:to-primary"
+          >
             <Plus className="w-4 h-4 mr-2" />
             Nuevo Proveedor
           </Button>
@@ -230,6 +236,8 @@ export const SuppliersSection = () => {
           </div>
         </CardContent>
       </Card>
+
+      <NewSupplierModal open={isNewSupplierOpen} onOpenChange={setIsNewSupplierOpen} />
     </div>
   );
 };

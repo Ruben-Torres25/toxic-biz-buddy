@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,8 +15,10 @@ import {
   Mail,
   MapPin
 } from "lucide-react";
+import { NewClientModal } from "@/components/modals/NewClientModal";
 
 export const ClientsSection = () => {
+  const [isNewClientOpen, setIsNewClientOpen] = useState(false);
   const clients = [
     {
       id: "CLI001",
@@ -76,7 +79,10 @@ export const ClientsSection = () => {
           <h1 className="text-3xl font-bold text-foreground">Gestión de Clientes</h1>
           <p className="text-muted-foreground">Administra la información de tus clientes y sus cuentas</p>
         </div>
-        <Button className="bg-gradient-to-r from-secondary to-secondary-hover hover:from-secondary-hover hover:to-secondary">
+        <Button 
+          onClick={() => setIsNewClientOpen(true)}
+          className="bg-gradient-to-r from-secondary to-secondary-hover hover:from-secondary-hover hover:to-secondary"
+        >
           <Plus className="w-4 h-4 mr-2" />
           Nuevo Cliente
         </Button>
@@ -211,6 +217,8 @@ export const ClientsSection = () => {
           </div>
         </CardContent>
       </Card>
+
+      <NewClientModal open={isNewClientOpen} onOpenChange={setIsNewClientOpen} />
     </div>
   );
 };
