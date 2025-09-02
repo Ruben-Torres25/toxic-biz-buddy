@@ -9,8 +9,10 @@ import { Plus, Trash2, ArrowLeft, Save } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface OrderItem {
+  id: string;
   product: string;
   productCode: string;
+  productName: string;
   quantity: number;
   price: number;
   discount: number;
@@ -21,20 +23,58 @@ const NewOrder = () => {
   const { toast } = useToast();
   const [client, setClient] = useState("");
   const [saleCondition, setSaleCondition] = useState("");
-  const [orderItems, setOrderItems] = useState<OrderItem[]>([{ product: "", productCode: "", quantity: 1, price: 0, discount: 0 }]);
+  const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
+  
+  // Form state for adding products
+  const [currentProduct, setCurrentProduct] = useState("");
+  const [currentQuantity, setCurrentQuantity] = useState(1);
+  const [currentDiscount, setCurrentDiscount] = useState(0);
+
+  const productData: { [key: string]: { price: number, code: string, name: string } } = {
+    "detergente": { price: 85, code: "DET-5L", name: "Detergente 5L" },
+    "lavandina": { price: 45, code: "LAV-5L", name: "Lavandina 5L" },
+    "jabon": { price: 120, code: "JAB-5L", name: "Jabón Líquido 5L" },
+    "desengrasante": { price: 95, code: "DES-1L", name: "Desengrasante 1L" },
+  };
 
   const handleAddItem = () => {
-    setOrderItems([...orderItems, { product: "", productCode: "", quantity: 1, price: 0, discount: 0 }]);
+    if (!currentProduct) {
+      toast({
+        title: "Error",
+        description: "Por favor selecciona un producto",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const product = productData[currentProduct];
+    if (product) {
+      const newItem: OrderItem = {
+        id: Date.now().toString(),
+        product: currentProduct,
+        productCode: product.code,
+        productName: product.name,
+        quantity: currentQuantity,
+        price: product.price,
+        discount: currentDiscount,
+      };
+      
+      setOrderItems([...orderItems, newItem]);
+      
+      // Reset form
+      setCurrentProduct("");
+      setCurrentQuantity(1);
+      setCurrentDiscount(0);
+      
+      toast({
+        title: "Producto agregado",
+        description: `${product.name} ha sido agregado al pedido`,
+      });
+    }
   };
 
-  const handleRemoveItem = (index: number) => {
-    setOrderItems(orderItems.filter((_, i) => i !== index));
-  };
-
-  const handleUpdateItem = (index: number, field: keyof OrderItem, value: string | number) => {
-    const newItems = [...orderItems];
-    newItems[index] = { ...newItems[index], [field]: value };
-    setOrderItems(newItems);
+  const handleRemoveItem = (id: string) => {
+    setOrderItems(orderItems.filter(item => item.id !== id));
   };
 
   const handleSubmit = () => {
@@ -132,119 +172,112 @@ const NewOrder = () => {
               </CardContent>
             </Card>
 
-            {/* Products */}
+            {/* Add Product Form */}
             <Card>
               <CardHeader>
-                <CardTitle>Productos</CardTitle>
+                <CardTitle>Agregar Producto</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-6">
-                {orderItems.map((item, index) => {
-                  const itemSubtotal = item.quantity * item.price;
-                  const itemDiscount = itemSubtotal * (item.discount / 100);
-                  const itemTotal = itemSubtotal - itemDiscount;
+              <CardContent>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="col-span-2">
+                    <Label htmlFor="product">Producto</Label>
+                    <Select value={currentProduct} onValueChange={setCurrentProduct}>
+                      <SelectTrigger id="product">
+                        <SelectValue placeholder="Seleccionar producto" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="detergente">Detergente 5L</SelectItem>
+                        <SelectItem value="lavandina">Lavandina 5L</SelectItem>
+                        <SelectItem value="jabon">Jabón Líquido 5L</SelectItem>
+                        <SelectItem value="desengrasante">Desengrasante 1L</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                   
-                  return (
-                    <div key={index} className="space-y-3 p-4 border rounded-lg bg-muted/10">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="col-span-2">
-                          <Label>Producto</Label>
-                          <Select
-                            value={item.product}
-                            onValueChange={(value) => {
-                              handleUpdateItem(index, "product", value);
-                              // Auto-fill price and code based on product
-                              const productData: { [key: string]: { price: number, code: string } } = {
-                                "detergente": { price: 85, code: "DET-5L" },
-                                "lavandina": { price: 45, code: "LAV-5L" },
-                                "jabon": { price: 120, code: "JAB-5L" },
-                                "desengrasante": { price: 95, code: "DES-1L" },
-                              };
-                              if (productData[value]) {
-                                handleUpdateItem(index, "price", productData[value].price);
-                                handleUpdateItem(index, "productCode", productData[value].code);
-                              }
-                            }}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Seleccionar producto" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="detergente">Detergente 5L</SelectItem>
-                              <SelectItem value="lavandina">Lavandina 5L</SelectItem>
-                              <SelectItem value="jabon">Jabón Líquido 5L</SelectItem>
-                              <SelectItem value="desengrasante">Desengrasante 1L</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        
-                        <div>
-                          <Label>Código</Label>
-                          <Input
-                            type="text"
-                            placeholder="Código"
-                            value={item.productCode}
-                            onChange={(e) => handleUpdateItem(index, "productCode", e.target.value)}
-                          />
-                        </div>
-                        
-                        <div>
-                          <Label>Cantidad</Label>
-                          <Input
-                            type="number"
-                            placeholder="Cantidad"
-                            value={item.quantity}
-                            onChange={(e) => handleUpdateItem(index, "quantity", parseInt(e.target.value) || 1)}
-                          />
-                        </div>
-                        
-                        <div>
-                          <Label>Precio Unitario</Label>
-                          <Input
-                            type="number"
-                            placeholder="Precio"
-                            value={item.price}
-                            onChange={(e) => handleUpdateItem(index, "price", parseFloat(e.target.value) || 0)}
-                          />
-                        </div>
-                        
-                        <div>
-                          <Label>Descuento (%)</Label>
-                          <Input
-                            type="number"
-                            placeholder="0"
-                            value={item.discount}
-                            onChange={(e) => handleUpdateItem(index, "discount", parseFloat(e.target.value) || 0)}
-                          />
-                        </div>
-                      </div>
-                      
-                      <div className="flex justify-between items-center pt-3 border-t">
-                        <div className="text-sm space-x-4">
-                          <span className="text-muted-foreground">Subtotal: ${itemSubtotal.toFixed(2)}</span>
-                          {itemDiscount > 0 && (
-                            <span className="text-muted-foreground">Descuento: -${itemDiscount.toFixed(2)}</span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold">Total: ${itemTotal.toFixed(2)}</span>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleRemoveItem(index)}
-                            disabled={orderItems.length === 1}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-                <Button variant="outline" onClick={handleAddItem}>
+                  <div>
+                    <Label htmlFor="quantity">Cantidad</Label>
+                    <Input
+                      id="quantity"
+                      type="number"
+                      min="1"
+                      value={currentQuantity}
+                      onChange={(e) => setCurrentQuantity(parseInt(e.target.value) || 1)}
+                    />
+                  </div>
+                  
+                  <div>
+                    <Label htmlFor="discount">Descuento (%)</Label>
+                    <Input
+                      id="discount"
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={currentDiscount}
+                      onChange={(e) => setCurrentDiscount(parseFloat(e.target.value) || 0)}
+                    />
+                  </div>
+                </div>
+                
+                <Button className="mt-4" onClick={handleAddItem}>
                   <Plus className="h-4 w-4 mr-2" /> Agregar Producto
                 </Button>
               </CardContent>
             </Card>
+
+            {/* Products Table */}
+            {orderItems.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Lista de Productos</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr className="border-b">
+                          <th className="text-left p-2 font-medium text-muted-foreground">Código</th>
+                          <th className="text-left p-2 font-medium text-muted-foreground">Nombre del Producto</th>
+                          <th className="text-center p-2 font-medium text-muted-foreground">Cantidad</th>
+                          <th className="text-right p-2 font-medium text-muted-foreground">Precio Unitario</th>
+                          <th className="text-right p-2 font-medium text-muted-foreground">Descuento</th>
+                          <th className="text-right p-2 font-medium text-muted-foreground">Precio Sumado</th>
+                          <th className="text-center p-2 font-medium text-muted-foreground">Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {orderItems.map((item) => {
+                          const subtotal = item.quantity * item.price;
+                          const discountAmount = subtotal * (item.discount / 100);
+                          const total = subtotal - discountAmount;
+                          
+                          return (
+                            <tr key={item.id} className="border-b">
+                              <td className="p-2 text-sm">{item.productCode}</td>
+                              <td className="p-2 text-sm">{item.productName}</td>
+                              <td className="p-2 text-center text-sm">{item.quantity}</td>
+                              <td className="p-2 text-right text-sm">${item.price.toFixed(2)}</td>
+                              <td className="p-2 text-right text-sm">
+                                {item.discount > 0 ? `${item.discount}%` : '-'}
+                              </td>
+                              <td className="p-2 text-right font-semibold text-sm">${total.toFixed(2)}</td>
+                              <td className="p-2 text-center">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleRemoveItem(item.id)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           {/* Order Summary */}
