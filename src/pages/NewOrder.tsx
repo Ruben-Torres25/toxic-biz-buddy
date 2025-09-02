@@ -10,8 +10,10 @@ import { useToast } from "@/hooks/use-toast";
 
 interface OrderItem {
   product: string;
+  productCode: string;
   quantity: number;
   price: number;
+  discount: number;
 }
 
 const NewOrder = () => {
@@ -19,10 +21,10 @@ const NewOrder = () => {
   const { toast } = useToast();
   const [client, setClient] = useState("");
   const [saleCondition, setSaleCondition] = useState("");
-  const [orderItems, setOrderItems] = useState<OrderItem[]>([{ product: "", quantity: 1, price: 0 }]);
+  const [orderItems, setOrderItems] = useState<OrderItem[]>([{ product: "", productCode: "", quantity: 1, price: 0, discount: 0 }]);
 
   const handleAddItem = () => {
-    setOrderItems([...orderItems, { product: "", quantity: 1, price: 0 }]);
+    setOrderItems([...orderItems, { product: "", productCode: "", quantity: 1, price: 0, discount: 0 }]);
   };
 
   const handleRemoveItem = (index: number) => {
@@ -62,8 +64,12 @@ const NewOrder = () => {
   };
 
   const subtotal = orderItems.reduce((sum, item) => sum + item.quantity * item.price, 0);
-  const discount = saleCondition === "con-descuento" ? subtotal * 0.1 : 0;
-  const total = subtotal - discount;
+  const productDiscounts = orderItems.reduce((sum, item) => {
+    const itemSubtotal = item.quantity * item.price;
+    return sum + (itemSubtotal * (item.discount / 100));
+  }, 0);
+  const generalDiscount = saleCondition === "con-descuento" ? (subtotal - productDiscounts) * 0.1 : 0;
+  const total = subtotal - productDiscounts - generalDiscount;
 
   return (
     <div className="min-h-screen bg-background p-8">
@@ -131,59 +137,109 @@ const NewOrder = () => {
               <CardHeader>
                 <CardTitle>Productos</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                {orderItems.map((item, index) => (
-                  <div key={index} className="flex gap-2">
-                    <Select
-                      value={item.product}
-                      onValueChange={(value) => {
-                        handleUpdateItem(index, "product", value);
-                        // Auto-fill price based on product
-                        const prices: { [key: string]: number } = {
-                          "detergente": 85,
-                          "lavandina": 45,
-                          "jabon": 120,
-                          "desengrasante": 95,
-                        };
-                        if (prices[value]) {
-                          handleUpdateItem(index, "price", prices[value]);
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="flex-1">
-                        <SelectValue placeholder="Seleccionar producto" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="detergente">Detergente 5L</SelectItem>
-                        <SelectItem value="lavandina">Lavandina 5L</SelectItem>
-                        <SelectItem value="jabon">Jabón Líquido 5L</SelectItem>
-                        <SelectItem value="desengrasante">Desengrasante 1L</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Input
-                      type="number"
-                      placeholder="Cantidad"
-                      className="w-24"
-                      value={item.quantity}
-                      onChange={(e) => handleUpdateItem(index, "quantity", parseInt(e.target.value) || 1)}
-                    />
-                    <Input
-                      type="number"
-                      placeholder="Precio"
-                      className="w-32"
-                      value={item.price}
-                      onChange={(e) => handleUpdateItem(index, "price", parseFloat(e.target.value) || 0)}
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleRemoveItem(index)}
-                      disabled={orderItems.length === 1}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ))}
+              <CardContent className="space-y-6">
+                {orderItems.map((item, index) => {
+                  const itemSubtotal = item.quantity * item.price;
+                  const itemDiscount = itemSubtotal * (item.discount / 100);
+                  const itemTotal = itemSubtotal - itemDiscount;
+                  
+                  return (
+                    <div key={index} className="space-y-3 p-4 border rounded-lg bg-muted/10">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="col-span-2">
+                          <Label>Producto</Label>
+                          <Select
+                            value={item.product}
+                            onValueChange={(value) => {
+                              handleUpdateItem(index, "product", value);
+                              // Auto-fill price and code based on product
+                              const productData: { [key: string]: { price: number, code: string } } = {
+                                "detergente": { price: 85, code: "DET-5L" },
+                                "lavandina": { price: 45, code: "LAV-5L" },
+                                "jabon": { price: 120, code: "JAB-5L" },
+                                "desengrasante": { price: 95, code: "DES-1L" },
+                              };
+                              if (productData[value]) {
+                                handleUpdateItem(index, "price", productData[value].price);
+                                handleUpdateItem(index, "productCode", productData[value].code);
+                              }
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Seleccionar producto" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="detergente">Detergente 5L</SelectItem>
+                              <SelectItem value="lavandina">Lavandina 5L</SelectItem>
+                              <SelectItem value="jabon">Jabón Líquido 5L</SelectItem>
+                              <SelectItem value="desengrasante">Desengrasante 1L</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        
+                        <div>
+                          <Label>Código</Label>
+                          <Input
+                            type="text"
+                            placeholder="Código"
+                            value={item.productCode}
+                            onChange={(e) => handleUpdateItem(index, "productCode", e.target.value)}
+                          />
+                        </div>
+                        
+                        <div>
+                          <Label>Cantidad</Label>
+                          <Input
+                            type="number"
+                            placeholder="Cantidad"
+                            value={item.quantity}
+                            onChange={(e) => handleUpdateItem(index, "quantity", parseInt(e.target.value) || 1)}
+                          />
+                        </div>
+                        
+                        <div>
+                          <Label>Precio Unitario</Label>
+                          <Input
+                            type="number"
+                            placeholder="Precio"
+                            value={item.price}
+                            onChange={(e) => handleUpdateItem(index, "price", parseFloat(e.target.value) || 0)}
+                          />
+                        </div>
+                        
+                        <div>
+                          <Label>Descuento (%)</Label>
+                          <Input
+                            type="number"
+                            placeholder="0"
+                            value={item.discount}
+                            onChange={(e) => handleUpdateItem(index, "discount", parseFloat(e.target.value) || 0)}
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="flex justify-between items-center pt-3 border-t">
+                        <div className="text-sm space-x-4">
+                          <span className="text-muted-foreground">Subtotal: ${itemSubtotal.toFixed(2)}</span>
+                          {itemDiscount > 0 && (
+                            <span className="text-muted-foreground">Descuento: -${itemDiscount.toFixed(2)}</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold">Total: ${itemTotal.toFixed(2)}</span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleRemoveItem(index)}
+                            disabled={orderItems.length === 1}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
                 <Button variant="outline" onClick={handleAddItem}>
                   <Plus className="h-4 w-4 mr-2" /> Agregar Producto
                 </Button>
@@ -203,10 +259,16 @@ const NewOrder = () => {
                     <span className="text-muted-foreground">Subtotal:</span>
                     <span>${subtotal.toFixed(2)}</span>
                   </div>
-                  {discount > 0 && (
+                  {productDiscounts > 0 && (
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Descuento (10%):</span>
-                      <span className="text-success">-${discount.toFixed(2)}</span>
+                      <span className="text-muted-foreground">Descuentos de productos:</span>
+                      <span className="text-destructive">-${productDiscounts.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {generalDiscount > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Descuento general (10%):</span>
+                      <span className="text-destructive">-${generalDiscount.toFixed(2)}</span>
                     </div>
                   )}
                   <div className="border-t pt-2">
