@@ -38,8 +38,8 @@ export const OrdersSection = () => {
       total: 450.00,
       status: "completado",
       items: [
-        { product: "Producto A", quantity: 2, unitPrice: 150.00, total: 300.00 },
-        { product: "Producto B", quantity: 1, unitPrice: 150.00, total: 150.00 }
+        { productCode: "PRD001", product: "Producto A", quantity: 2, unitPrice: 150.00, discount: 0, total: 300.00 },
+        { productCode: "PRD002", product: "Producto B", quantity: 1, unitPrice: 150.00, discount: 0, total: 150.00 }
       ],
       address: "Calle Principal 123, Ciudad",
       payment: "Tarjeta de crédito"
@@ -51,8 +51,8 @@ export const OrdersSection = () => {
       total: 230.50,
       status: "pendiente",
       items: [
-        { product: "Producto C", quantity: 1, unitPrice: 100.50, total: 100.50 },
-        { product: "Producto D", quantity: 2, unitPrice: 65.00, total: 130.00 }
+        { productCode: "PRD003", product: "Producto C", quantity: 1, unitPrice: 100.50, discount: 0, total: 100.50 },
+        { productCode: "PRD004", product: "Producto D", quantity: 2, unitPrice: 65.00, discount: 0, total: 130.00 }
       ],
       address: "Av. Secundaria 456, Ciudad",
       payment: "Efectivo"
@@ -64,7 +64,7 @@ export const OrdersSection = () => {
       total: 680.00,
       status: "pendiente",
       items: [
-        { product: "Producto E", quantity: 5, unitPrice: 136.00, total: 680.00 }
+        { productCode: "PRD005", product: "Producto E", quantity: 5, unitPrice: 136.00, discount: 10, total: 680.00 }
       ],
       address: "Plaza Central 789, Ciudad",
       payment: "Transferencia"
@@ -76,7 +76,7 @@ export const OrdersSection = () => {
       total: 320.75,
       status: "cancelado",
       items: [
-        { product: "Producto F", quantity: 2, unitPrice: 160.375, total: 320.75 }
+        { productCode: "PRD006", product: "Producto F", quantity: 2, unitPrice: 160.375, discount: 5, total: 320.75 }
       ],
       address: "Barrio Norte 321, Ciudad",
       payment: "Efectivo"

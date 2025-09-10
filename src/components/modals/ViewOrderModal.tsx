@@ -1,12 +1,14 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { CheckCircle, Clock, XCircle, Package, CreditCard, MapPin } from "lucide-react";
+import { CheckCircle, Clock, XCircle, Package, CreditCard, MapPin, User, Hash, Percent } from "lucide-react";
 
 interface OrderItem {
+  productCode?: string;
   product: string;
   quantity: number;
   unitPrice: number;
+  discount?: number;
   total: number;
 }
 
@@ -54,20 +56,23 @@ export function ViewOrderModal({ open, onOpenChange, order }: ViewOrderModalProp
           {/* Order Info */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <p className="text-sm text-muted-foreground">Cliente</p>
-              <p className="text-lg font-semibold">{order.client}</p>
+              <p className="text-sm text-muted-foreground">Pedido #</p>
+              <p className="text-lg font-semibold">{order.id}</p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Fecha</p>
               <p className="text-lg font-semibold">{order.date}</p>
             </div>
+            <div className="flex items-start gap-3">
+              <User className="w-4 h-4 mt-1 text-muted-foreground" />
+              <div>
+                <p className="text-sm font-medium">Cliente</p>
+                <p className="text-lg font-semibold">{order.client}</p>
+              </div>
+            </div>
             <div>
               <p className="text-sm text-muted-foreground">Estado</p>
               <div className="mt-1">{getStatusBadge(order.status)}</div>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Total</p>
-              <p className="text-lg font-bold text-primary">${order.total.toFixed(2)}</p>
             </div>
           </div>
 
@@ -97,32 +102,58 @@ export function ViewOrderModal({ open, onOpenChange, order }: ViewOrderModalProp
           <div>
             <div className="flex items-center gap-2 mb-4">
               <Package className="w-4 h-4" />
-              <h3 className="font-semibold">Productos del Pedido</h3>
+              <h3 className="font-semibold">Detalle de Productos</h3>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-border">
+                  <tr className="border-b border-border bg-accent/50">
+                    <th className="text-left py-2 px-3 text-sm font-semibold">Código</th>
                     <th className="text-left py-2 px-3 text-sm font-semibold">Producto</th>
                     <th className="text-center py-2 px-3 text-sm font-semibold">Cantidad</th>
                     <th className="text-right py-2 px-3 text-sm font-semibold">Precio Unit.</th>
+                    <th className="text-center py-2 px-3 text-sm font-semibold">Descuento</th>
                     <th className="text-right py-2 px-3 text-sm font-semibold">Total</th>
                   </tr>
                 </thead>
                 <tbody>
                   {order.items.map((item, index) => (
-                    <tr key={index} className="border-b border-border">
-                      <td className="py-2 px-3 text-sm">{item.product}</td>
+                    <tr key={index} className="border-b border-border hover:bg-accent/20 transition-colors">
+                      <td className="py-2 px-3 text-sm font-medium text-muted-foreground">
+                        <div className="flex items-center gap-1">
+                          <Hash className="w-3 h-3" />
+                          {item.productCode || `PRD00${index + 1}`}
+                        </div>
+                      </td>
+                      <td className="py-2 px-3 text-sm font-medium">{item.product}</td>
                       <td className="py-2 px-3 text-sm text-center">{item.quantity}</td>
                       <td className="py-2 px-3 text-sm text-right">${item.unitPrice.toFixed(2)}</td>
+                      <td className="py-2 px-3 text-sm text-center">
+                        {item.discount ? (
+                          <Badge variant="outline" className="text-xs">
+                            <Percent className="w-3 h-3 mr-1" />
+                            {item.discount}%
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </td>
                       <td className="py-2 px-3 text-sm text-right font-semibold">${item.total.toFixed(2)}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
+                  <tr className="border-t-2 border-border">
+                    <td colSpan={5} className="py-3 px-3 text-right font-semibold">Subtotal:</td>
+                    <td className="py-3 px-3 text-right font-semibold">${order.total.toFixed(2)}</td>
+                  </tr>
                   <tr>
-                    <td colSpan={3} className="py-3 px-3 text-right font-semibold">Total:</td>
-                    <td className="py-3 px-3 text-right font-bold text-lg text-primary">${order.total.toFixed(2)}</td>
+                    <td colSpan={5} className="py-1 px-3 text-right text-sm text-muted-foreground">IVA (21%):</td>
+                    <td className="py-1 px-3 text-right text-sm">${(order.total * 0.21).toFixed(2)}</td>
+                  </tr>
+                  <tr className="border-t border-border">
+                    <td colSpan={5} className="py-3 px-3 text-right font-bold">Total:</td>
+                    <td className="py-3 px-3 text-right font-bold text-lg text-primary">${(order.total * 1.21).toFixed(2)}</td>
                   </tr>
                 </tfoot>
               </table>

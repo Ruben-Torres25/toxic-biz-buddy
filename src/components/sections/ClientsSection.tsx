@@ -16,19 +16,28 @@ import {
   MapPin
 } from "lucide-react";
 import { NewClientModal } from "@/components/modals/NewClientModal";
+import { ViewClientModal } from "@/components/modals/ViewClientModal";
+import { EditClientModal } from "@/components/modals/EditClientModal";
+import { toast } from "@/hooks/use-toast";
 
 export const ClientsSection = () => {
   const [isNewClientOpen, setIsNewClientOpen] = useState(false);
-  const clients = [
+  const [isViewClientOpen, setIsViewClientOpen] = useState(false);
+  const [isEditClientOpen, setIsEditClientOpen] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<any>(null);
+  
+  const [clients, setClients] = useState([
     {
       id: "CLI001",
       name: "María García",
       email: "maria.garcia@email.com",
       phone: "+34 666 123 456",
       address: "Calle Mayor 123, Madrid",
+      postalCode: "28001",
       balance: 450.00,
       orders: 12,
-      lastOrder: "2024-01-08"
+      lastOrder: "2024-01-08",
+      taxId: "12345678A"
     },
     {
       id: "CLI002",
@@ -36,9 +45,11 @@ export const ClientsSection = () => {
       email: "carlos.lopez@email.com", 
       phone: "+34 677 234 567",
       address: "Avenida España 45, Barcelona",
+      postalCode: "08001",
       balance: -120.50,
       orders: 8,
-      lastOrder: "2024-01-07"
+      lastOrder: "2024-01-07",
+      taxId: "87654321B"
     },
     {
       id: "CLI003",
@@ -46,21 +57,25 @@ export const ClientsSection = () => {
       email: "ana.rodriguez@email.com",
       phone: "+34 688 345 678", 
       address: "Plaza Central 8, Valencia",
+      postalCode: "46001",
       balance: 0,
       orders: 15,
-      lastOrder: "2024-01-06"
+      lastOrder: "2024-01-06",
+      taxId: "11223344C"
     },
     {
       id: "CLI004",
       name: "Luis Martín",
       email: "luis.martin@email.com",
       phone: "+34 699 456 789",
-      address: "Calle Sol 67, Sevilla", 
+      address: "Calle Sol 67, Sevilla",
+      postalCode: "41001", 
       balance: 230.75,
       orders: 6,
-      lastOrder: "2024-01-05"
+      lastOrder: "2024-01-05",
+      taxId: "55667788D"
     }
-  ];
+  ]);
 
   const getBalanceBadge = (balance: number) => {
     if (balance > 0) {
@@ -70,6 +85,30 @@ export const ClientsSection = () => {
     } else {
       return <Badge className="bg-muted/10 text-muted-foreground border-muted/20">€0.00</Badge>;
     }
+  };
+
+  const handleView = (client: any) => {
+    setSelectedClient(client);
+    setIsViewClientOpen(true);
+  };
+
+  const handleEdit = (client: any) => {
+    setSelectedClient(client);
+    setIsEditClientOpen(true);
+  };
+
+  const handleDelete = (clientId: string) => {
+    toast({
+      title: "Cliente eliminado",
+      description: `El cliente ${clientId} ha sido eliminado exitosamente.`,
+    });
+    setClients(clients.filter(client => client.id !== clientId));
+  };
+
+  const handleSaveClient = (updatedClient: any) => {
+    setClients(clients.map(client => 
+      client.id === updatedClient.id ? updatedClient : client
+    ));
   };
 
   return (
@@ -199,13 +238,28 @@ export const ClientsSection = () => {
                     <td className="py-3 px-4 text-muted-foreground">{client.lastOrder}</td>
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
-                        <Button size="sm" variant="outline" className="h-8 w-8 p-0">
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="h-8 w-8 p-0"
+                          onClick={() => handleView(client)}
+                        >
                           <Eye className="w-4 h-4" />
                         </Button>
-                        <Button size="sm" variant="outline" className="h-8 w-8 p-0">
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="h-8 w-8 p-0"
+                          onClick={() => handleEdit(client)}
+                        >
                           <Edit className="w-4 h-4" />
                         </Button>
-                        <Button size="sm" variant="outline" className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive">
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => handleDelete(client.id)}
+                        >
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
@@ -219,6 +273,17 @@ export const ClientsSection = () => {
       </Card>
 
       <NewClientModal open={isNewClientOpen} onOpenChange={setIsNewClientOpen} />
+      <ViewClientModal 
+        open={isViewClientOpen}
+        onOpenChange={setIsViewClientOpen}
+        client={selectedClient}
+      />
+      <EditClientModal
+        open={isEditClientOpen}
+        onOpenChange={setIsEditClientOpen}
+        client={selectedClient}
+        onSave={handleSaveClient}
+      />
     </div>
   );
 };
