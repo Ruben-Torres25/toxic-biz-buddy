@@ -14,12 +14,15 @@ import {
   Mail,
   MapPin,
   Truck,
-  Package
+  Package,
+  ClipboardList
 } from "lucide-react";
 import { NewSupplierModal } from "@/components/modals/NewSupplierModal";
+import { RegisterMerchandiseModal } from "@/components/modals/RegisterMerchandiseModal";
 
 export const SuppliersSection = () => {
   const [isNewSupplierOpen, setIsNewSupplierOpen] = useState(false);
+  const [isRegisterMerchandiseOpen, setIsRegisterMerchandiseOpen] = useState(false);
   const suppliers = [
     {
       id: "SUP001",
@@ -86,8 +89,12 @@ export const SuppliersSection = () => {
           <p className="text-muted-foreground">Administra tus proveedores y recepción de mercadería</p>
         </div>
         <div className="flex gap-3">
-          <Button variant="outline" className="bg-gradient-to-r from-secondary/10 to-secondary/20 border-secondary/30">
-            <Package className="w-4 h-4 mr-2" />
+          <Button 
+            onClick={() => setIsRegisterMerchandiseOpen(true)}
+            variant="outline" 
+            className="bg-gradient-to-r from-secondary/10 to-secondary/20 border-secondary/30 hover:from-secondary/20 hover:to-secondary/30"
+          >
+            <ClipboardList className="w-4 h-4 mr-2" />
             Registrar Mercadería
           </Button>
           <Button 
@@ -238,6 +245,7 @@ export const SuppliersSection = () => {
       </Card>
 
       <NewSupplierModal open={isNewSupplierOpen} onOpenChange={setIsNewSupplierOpen} />
+      <RegisterMerchandiseModal open={isRegisterMerchandiseOpen} onOpenChange={setIsRegisterMerchandiseOpen} />
     </div>
   );
 };
