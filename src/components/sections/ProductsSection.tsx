@@ -54,7 +54,7 @@ export const ProductsSection = () => {
       minStock: 12,
       supplier: "CrystalClean"
     }
-  ];
+  ]);
 
   const getStockBadge = (stock: number, minStock: number) => {
     if (stock <= minStock / 2) {
@@ -64,6 +64,30 @@ export const ProductsSection = () => {
     } else {
       return <Badge className="bg-success/10 text-success border-success/20">Normal</Badge>;
     }
+  };
+
+  const handleView = (product: any) => {
+    setSelectedProduct(product);
+    setIsViewModalOpen(true);
+  };
+
+  const handleEdit = (product: any) => {
+    setSelectedProduct(product);
+    setIsEditModalOpen(true);
+  };
+
+  const handleDelete = (productCode: string) => {
+    toast({
+      title: "Producto eliminado",
+      description: `El producto ${productCode} ha sido eliminado exitosamente.`,
+    });
+    setProducts(products.filter(product => product.code !== productCode));
+  };
+
+  const handleSaveProduct = (updatedProduct: any) => {
+    setProducts(products.map(product => 
+      product.code === updatedProduct.code ? updatedProduct : product
+    ));
   };
 
   return (
@@ -192,13 +216,28 @@ export const ProductsSection = () => {
                     <td className="py-3 px-4 text-foreground">{product.supplier}</td>
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
-                        <Button size="sm" variant="outline" className="h-8 w-8 p-0">
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="h-8 w-8 p-0"
+                          onClick={() => handleView(product)}
+                        >
                           <Eye className="w-4 h-4" />
                         </Button>
-                        <Button size="sm" variant="outline" className="h-8 w-8 p-0">
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="h-8 w-8 p-0"
+                          onClick={() => handleEdit(product)}
+                        >
                           <Edit className="w-4 h-4" />
                         </Button>
-                        <Button size="sm" variant="outline" className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive">
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => handleDelete(product.code)}
+                        >
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>

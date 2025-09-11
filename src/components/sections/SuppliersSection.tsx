@@ -225,13 +225,28 @@ export const SuppliersSection = () => {
                     <td className="py-3 px-4">{getStatusBadge(supplier.status)}</td>
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
-                        <Button size="sm" variant="outline" className="h-8 w-8 p-0">
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="h-8 w-8 p-0"
+                          onClick={() => handleView(supplier)}
+                        >
                           <Eye className="w-4 h-4" />
                         </Button>
-                        <Button size="sm" variant="outline" className="h-8 w-8 p-0">
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="h-8 w-8 p-0"
+                          onClick={() => handleEdit(supplier)}
+                        >
                           <Edit className="w-4 h-4" />
                         </Button>
-                        <Button size="sm" variant="outline" className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive">
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => handleDelete(supplier.id)}
+                        >
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
