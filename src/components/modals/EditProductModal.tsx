@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "@/hooks/use-toast";
 
 interface Product {
-  code: string;
+  id: string;
   name: string;
   category: string;
   price: number;
@@ -54,11 +54,11 @@ export function EditProductModal({ open, onOpenChange, product, onSave }: EditPr
         
         <div className="space-y-4">
           <div>
-            <Label htmlFor="code">Código</Label>
+            <Label htmlFor="id">Código</Label>
             <Input
-              id="code"
-              value={editedProduct.code}
-              onChange={(e) => setEditedProduct({...editedProduct, code: e.target.value})}
+              id="id"
+              value={editedProduct.id}
+              onChange={(e) => setEditedProduct({...editedProduct, id: e.target.value})}
             />
           </div>
 

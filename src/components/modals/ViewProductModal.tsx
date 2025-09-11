@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Package, AlertTriangle, CheckCircle } from "lucide-react";
 
 interface Product {
-  code: string;
+  id: string;
   name: string;
   category: string;
   price: number;
@@ -50,7 +50,7 @@ export function ViewProductModal({ open, onOpenChange, product }: ViewProductMod
         <div className="space-y-4">
           <div>
             <p className="text-sm text-muted-foreground">Código</p>
-            <p className="font-semibold">{product.code}</p>
+            <p className="font-semibold">{product.id}</p>
           </div>
 
           <div>

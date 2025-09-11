@@ -14,10 +14,16 @@ import {
   Package
 } from "lucide-react";
 import { NewProductModal } from "@/components/modals/NewProductModal";
+import { ViewProductModal } from "@/components/modals/ViewProductModal";
+import { EditProductModal } from "@/components/modals/EditProductModal";
+import { toast } from "@/hooks/use-toast";
 
 export const ProductsSection = () => {
   const [isNewProductOpen, setIsNewProductOpen] = useState(false);
-  const products = [
+  const [isViewModalOpen, setIsViewModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<any>(null);
+  const [products, setProducts] = useState([
     {
       id: "PROD001",
       name: "Detergente Líquido Premium",
@@ -76,17 +82,17 @@ export const ProductsSection = () => {
     setIsEditModalOpen(true);
   };
 
-  const handleDelete = (productCode: string) => {
+  const handleDelete = (productId: string) => {
     toast({
       title: "Producto eliminado",
-      description: `El producto ${productCode} ha sido eliminado exitosamente.`,
+      description: `El producto ${productId} ha sido eliminado exitosamente.`,
     });
-    setProducts(products.filter(product => product.code !== productCode));
+    setProducts(products.filter(product => product.id !== productId));
   };
 
   const handleSaveProduct = (updatedProduct: any) => {
     setProducts(products.map(product => 
-      product.code === updatedProduct.code ? updatedProduct : product
+      product.id === updatedProduct.id ? updatedProduct : product
     ));
   };
 
@@ -236,7 +242,7 @@ export const ProductsSection = () => {
                           size="sm" 
                           variant="outline" 
                           className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
-                          onClick={() => handleDelete(product.code)}
+                          onClick={() => handleDelete(product.id)}
                         >
                           <Trash2 className="w-4 h-4" />
                         </Button>
@@ -251,6 +257,17 @@ export const ProductsSection = () => {
       </Card>
 
       <NewProductModal open={isNewProductOpen} onOpenChange={setIsNewProductOpen} />
+      <ViewProductModal 
+        open={isViewModalOpen} 
+        onOpenChange={setIsViewModalOpen} 
+        product={selectedProduct} 
+      />
+      <EditProductModal 
+        open={isEditModalOpen} 
+        onOpenChange={setIsEditModalOpen} 
+        product={selectedProduct} 
+        onSave={handleSaveProduct}
+      />
     </div>
   );
 };
