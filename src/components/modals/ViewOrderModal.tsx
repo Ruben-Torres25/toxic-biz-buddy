@@ -9,8 +9,9 @@ interface OrderItem {
   product: string;
   quantity: number;
   unitPrice: number;
+  price?: number;
   discount?: number;
-  total: number;
+  total?: number;
 }
 
 interface Order {
@@ -86,7 +87,7 @@ export function ViewOrderModal({ open, onOpenChange, order, onEdit }: ViewOrderM
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Estado</p>
-              <div className="mt-1">{getStatusBadge(order.status)}</div>
+              <div className="mt-1">{getStatusBadge(order.status?.toLowerCase?.() ?? String(order.status))}</div>
             </div>
           </div>
 
@@ -141,7 +142,7 @@ export function ViewOrderModal({ open, onOpenChange, order, onEdit }: ViewOrderM
                       </td>
                       <td className="py-2 px-3 text-sm font-medium">{item.product}</td>
                       <td className="py-2 px-3 text-sm text-center">{item.quantity}</td>
-                      <td className="py-2 px-3 text-sm text-right">${item.unitPrice.toFixed(2)}</td>
+                      <td className="py-2 px-3 text-sm text-right">${(item.unitPrice ?? item.price ?? 0).toFixed(2)}</td>
                       <td className="py-2 px-3 text-sm text-center">
                         {item.discount ? (
                           <Badge variant="outline" className="text-xs">
@@ -152,7 +153,7 @@ export function ViewOrderModal({ open, onOpenChange, order, onEdit }: ViewOrderM
                           <span className="text-muted-foreground">-</span>
                         )}
                       </td>
-                      <td className="py-2 px-3 text-sm text-right font-semibold">${item.total.toFixed(2)}</td>
+                      <td className="py-2 px-3 text-sm text-right font-semibold">${(item.total ?? ((item.unitPrice ?? item.price ?? 0) * (item.quantity ?? 0))).toFixed(2)}</td>
                     </tr>
                   ))}
                 </tbody>
