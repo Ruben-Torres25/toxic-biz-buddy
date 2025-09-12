@@ -1,7 +1,8 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { CheckCircle, Clock, XCircle, Package, CreditCard, MapPin, User, Hash, Percent } from "lucide-react";
+import { CheckCircle, Clock, XCircle, Package, CreditCard, MapPin, User, Hash, Percent, Edit } from "lucide-react";
 
 interface OrderItem {
   productCode?: string;
@@ -27,9 +28,10 @@ interface ViewOrderModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   order: Order | null;
+  onEdit?: () => void;
 }
 
-export function ViewOrderModal({ open, onOpenChange, order }: ViewOrderModalProps) {
+export function ViewOrderModal({ open, onOpenChange, order, onEdit }: ViewOrderModalProps) {
   if (!order) return null;
 
   const getStatusBadge = (status: string) => {
@@ -49,7 +51,19 @@ export function ViewOrderModal({ open, onOpenChange, order }: ViewOrderModalProp
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="text-2xl font-bold">Detalles del Pedido {order.id}</DialogTitle>
+          <div className="flex items-center justify-between">
+            <DialogTitle className="text-2xl font-bold">Detalles del Pedido {order.id}</DialogTitle>
+            {onEdit && (
+              <Button
+                onClick={onEdit}
+                size="sm"
+                className="bg-gradient-to-r from-primary to-primary-hover hover:from-primary-hover hover:to-primary"
+              >
+                <Edit className="w-4 h-4 mr-2" />
+                Editar Pedido
+              </Button>
+            )}
+          </div>
         </DialogHeader>
         
         <div className="space-y-6">

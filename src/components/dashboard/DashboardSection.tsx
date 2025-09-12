@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { StatsCard } from "./StatsCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,8 +12,15 @@ import {
   Clock,
   CheckCircle
 } from "lucide-react";
+import { ViewOrderModal } from "@/components/modals/ViewOrderModal";
+import { EditOrderModal } from "@/components/modals/EditOrderModal";
+import { toast } from "@/hooks/use-toast";
 
 export const DashboardSection = () => {
+  const [isViewOrderOpen, setIsViewOrderOpen] = useState(false);
+  const [isEditOrderOpen, setIsEditOrderOpen] = useState(false);
+  const [selectedOrder, setSelectedOrder] = useState<any>(null);
+  
   // Mock data for demonstration
   const stats = [
     {
@@ -43,10 +51,60 @@ export const DashboardSection = () => {
   ];
 
   const recentOrders = [
-    { id: "001", client: "María García", total: "$450", status: "Completado", time: "10:30 AM" },
-    { id: "002", client: "Carlos López", total: "$230", status: "Pendiente", time: "11:15 AM" },
-    { id: "003", client: "Ana Rodríguez", total: "$680", status: "Pendiente", time: "12:00 PM" },
-    { id: "004", client: "Luis Martín", total: "$320", status: "Completado", time: "12:45 PM" },
+    { 
+      id: "001", 
+      client: "María García", 
+      total: 450, 
+      status: "Completado", 
+      time: "10:30 AM",
+      date: "2024-01-08",
+      paymentMethod: "Efectivo",
+      address: "Calle Mayor 123, Madrid",
+      items: [
+        { product: "Detergente Líquido", quantity: 5, price: 45, discount: 5, total: 220 },
+        { product: "Desinfectante Multiuso", quantity: 3, price: 80, discount: 10, total: 230 }
+      ]
+    },
+    { 
+      id: "002", 
+      client: "Carlos López", 
+      total: 230, 
+      status: "Pendiente", 
+      time: "11:15 AM",
+      date: "2024-01-08",
+      paymentMethod: "Transferencia",
+      address: "Avenida España 45, Barcelona",
+      items: [
+        { product: "Jabón en Polvo", quantity: 2, price: 65, discount: 0, total: 130 },
+        { product: "Limpiador de Vidrios", quantity: 4, price: 25, discount: 0, total: 100 }
+      ]
+    },
+    { 
+      id: "003", 
+      client: "Ana Rodríguez", 
+      total: 680, 
+      status: "Pendiente", 
+      time: "12:00 PM",
+      date: "2024-01-08",
+      paymentMethod: "Tarjeta",
+      address: "Plaza Central 8, Valencia",
+      items: [
+        { product: "Detergente Industrial", quantity: 10, price: 68, discount: 0, total: 680 }
+      ]
+    },
+    { 
+      id: "004", 
+      client: "Luis Martín", 
+      total: 320, 
+      status: "Completado", 
+      time: "12:45 PM",
+      date: "2024-01-08",
+      paymentMethod: "Efectivo",
+      address: "Calle Sol 67, Sevilla",
+      items: [
+        { product: "Cloro Industrial", quantity: 8, price: 40, discount: 0, total: 320 }
+      ]
+    },
   ];
 
   const lowStockProducts = [
@@ -55,6 +113,23 @@ export const DashboardSection = () => {
     { name: "Jabón en Polvo", stock: 2, min: 8 },
     { name: "Limpiador de Vidrios", stock: 4, min: 12 },
   ];
+
+  const handleViewOrder = (order: any) => {
+    setSelectedOrder(order);
+    setIsViewOrderOpen(true);
+  };
+
+  const handleEditOrder = () => {
+    setIsViewOrderOpen(false);
+    setIsEditOrderOpen(true);
+  };
+
+  const handleSaveOrder = (updatedOrder: any) => {
+    toast({
+      title: "Pedido actualizado",
+      description: `El pedido #${updatedOrder.id} ha sido actualizado exitosamente.`,
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -96,7 +171,11 @@ export const DashboardSection = () => {
           <CardContent>
             <div className="space-y-3">
               {recentOrders.map((order) => (
-                <div key={order.id} className="flex items-center justify-between p-3 rounded-lg bg-accent/30 hover:bg-accent/50 transition-colors">
+                <div 
+                  key={order.id} 
+                  className="flex items-center justify-between p-3 rounded-lg bg-accent/30 hover:bg-accent/50 transition-colors cursor-pointer"
+                  onClick={() => handleViewOrder(order)}
+                >
                   <div className="flex items-center gap-3">
                     <div className={`w-2 h-2 rounded-full ${
                       order.status === "Completado" ? "bg-success" : "bg-warning"
@@ -107,7 +186,7 @@ export const DashboardSection = () => {
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="font-semibold text-foreground">{order.total}</p>
+                    <p className="font-semibold text-foreground">${order.total}</p>
                     <p className={`text-xs ${
                       order.status === "Completado" ? "text-success" : "text-warning"
                     }`}>
@@ -146,6 +225,20 @@ export const DashboardSection = () => {
           </CardContent>
         </Card>
       </div>
+
+      <ViewOrderModal 
+        open={isViewOrderOpen}
+        onOpenChange={setIsViewOrderOpen}
+        order={selectedOrder}
+        onEdit={handleEditOrder}
+      />
+      
+      <EditOrderModal
+        open={isEditOrderOpen}
+        onOpenChange={setIsEditOrderOpen}
+        order={selectedOrder}
+        onSave={handleSaveOrder}
+      />
     </div>
   );
 };
