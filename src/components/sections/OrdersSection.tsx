@@ -19,18 +19,22 @@ import { ViewOrderModal } from "@/components/modals/ViewOrderModal";
 import { EditOrderModal } from "@/components/modals/EditOrderModal";
 import { FilterOrdersModal } from "@/components/modals/FilterOrdersModal";
 import { toast } from "@/hooks/use-toast";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { OrdersAPI } from "@/services/orders.api";
+import { Order } from "@/types/domain";
 
 export const OrdersSection = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
-  const [filteredOrders, setFilteredOrders] = useState<any[]>([]);
   const [filters, setFilters] = useState<any>({});
   
-  const [orders, setOrders] = useState([
+  // Datos mock como fallback
+  const mockOrders = [
     {
       id: "PED001",
       client: "María García",
@@ -81,15 +85,86 @@ export const OrdersSection = () => {
       address: "Barrio Norte 321, Ciudad",
       payment: "Efectivo"
     }
-  ]);
+  ];
+
+  // Fetch orders con React Query
+  const { data: orders = [], isLoading, error } = useQuery({
+    queryKey: ['orders'],
+    queryFn: OrdersAPI.list,
+    retry: 1,
+  });
+
+  // Mutation para confirmar pedido
+  const confirmOrderMutation = useMutation({
+    mutationFn: (id: string) => OrdersAPI.confirm(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      toast({
+        title: "Pedido confirmado",
+        description: "El pedido ha sido confirmado exitosamente.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error al confirmar",
+        description: error.message || "No se pudo confirmar el pedido.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation para cancelar pedido
+  const cancelOrderMutation = useMutation({
+    mutationFn: (id: string) => OrdersAPI.cancel(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      toast({
+        title: "Pedido cancelado",
+        description: "El pedido ha sido cancelado exitosamente.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error al cancelar",
+        description: error.message || "No se pudo cancelar el pedido.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation para eliminar pedido
+  const deleteOrderMutation = useMutation({
+    mutationFn: (id: string) => OrdersAPI.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      toast({
+        title: "Pedido eliminado",
+        description: "El pedido ha sido eliminado exitosamente.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error al eliminar",
+        description: error.message || "No se pudo eliminar el pedido.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Usar orders del API o mockOrders si hay error
+  const displayData: any[] = error ? mockOrders : orders;
 
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "completado":
+      case "confirmed":
+      case "delivered":
         return <Badge className="bg-success/10 text-success border-success/20"><CheckCircle className="w-3 h-3 mr-1" />Completado</Badge>;
       case "pendiente":
+      case "pending":
         return <Badge className="bg-warning/10 text-warning border-warning/20"><Clock className="w-3 h-3 mr-1" />Pendiente</Badge>;
       case "cancelado":
+      case "cancelled":
         return <Badge className="bg-destructive/10 text-destructive border-destructive/20"><XCircle className="w-3 h-3 mr-1" />Cancelado</Badge>;
       default:
         return <Badge variant="outline">{status}</Badge>;
@@ -107,61 +182,94 @@ export const OrdersSection = () => {
   };
 
   const handleDelete = (orderId: string) => {
-    toast({
-      title: "Pedido eliminado",
-      description: `El pedido ${orderId} ha sido eliminado exitosamente.`,
-    });
-    setOrders(orders.filter(order => order.id !== orderId));
+    deleteOrderMutation.mutate(orderId);
   };
 
-  const handleSaveOrder = (updatedOrder: any) => {
-    setOrders(orders.map(order => 
-      order.id === updatedOrder.id ? updatedOrder : order
-    ));
+  const handleConfirm = (orderId: string) => {
+    confirmOrderMutation.mutate(orderId);
+  };
+
+  const handleCancel = (orderId: string) => {
+    cancelOrderMutation.mutate(orderId);
+  };
+
+  const handleSaveOrder = async (updatedOrder: any) => {
+    try {
+      await OrdersAPI.update(updatedOrder.id, updatedOrder);
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      toast({
+        title: "Pedido actualizado",
+        description: "Los cambios han sido guardados exitosamente.",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error al actualizar",
+        description: error.message || "No se pudo actualizar el pedido.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleApplyFilters = (appliedFilters: any) => {
     setFilters(appliedFilters);
-    let filtered = [...orders];
-
-    if (appliedFilters.client) {
-      filtered = filtered.filter(order => 
-        order.client.toLowerCase().includes(appliedFilters.client.toLowerCase())
-      );
-    }
-
-    if (appliedFilters.status && appliedFilters.status !== "all") {
-      filtered = filtered.filter(order => order.status === appliedFilters.status);
-    }
-
-    if (appliedFilters.city) {
-      // Filter by city if address contains city
-      filtered = filtered.filter(order => 
-        order.address?.toLowerCase().includes(appliedFilters.city.toLowerCase())
-      );
-    }
-
-    if (appliedFilters.dateFrom) {
-      filtered = filtered.filter(order => 
-        new Date(order.date) >= appliedFilters.dateFrom
-      );
-    }
-
-    if (appliedFilters.dateTo) {
-      filtered = filtered.filter(order => 
-        new Date(order.date) <= appliedFilters.dateTo
-      );
-    }
-
-    setFilteredOrders(filtered);
   };
 
-  const displayOrders = searchTerm 
-    ? orders.filter(order => 
-        order.client.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        order.id.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-    : (filteredOrders.length > 0 || Object.keys(filters).length > 0 ? filteredOrders : orders);
+  // Aplicar filtros
+  let filteredOrders: any[] = displayData;
+  
+  // Filtro de búsqueda
+  if (searchTerm) {
+    filteredOrders = filteredOrders.filter((order: any) => 
+      order.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (order.client && order.client.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (order.customer?.name && order.customer.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    );
+  }
+
+  // Aplicar filtros adicionales
+  if (Object.keys(filters).length > 0) {
+    filteredOrders = filteredOrders.filter((order: any) => {
+      const clientName = order.client || order.customer?.name || '';
+      
+      if (filters.client && !clientName.toLowerCase().includes(filters.client.toLowerCase())) {
+        return false;
+      }
+      
+      if (filters.status && filters.status !== "all" && order.status !== filters.status) {
+        return false;
+      }
+      
+      if (filters.city) {
+        const address = order.address || '';
+        if (!address.toLowerCase().includes(filters.city.toLowerCase())) {
+          return false;
+        }
+      }
+      
+      const orderDate = order.date || order.createdAt;
+      if (filters.dateFrom && orderDate) {
+        if (new Date(orderDate) < new Date(filters.dateFrom)) {
+          return false;
+        }
+      }
+      
+      if (filters.dateTo && orderDate) {
+        if (new Date(orderDate) > new Date(filters.dateTo)) {
+          return false;
+        }
+      }
+      
+      return true;
+    });
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <div className="text-muted-foreground">Cargando pedidos...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -224,13 +332,15 @@ export const OrdersSection = () => {
                 </tr>
               </thead>
               <tbody>
-                {displayOrders.map((order) => (
+                {filteredOrders.map((order: any) => (
                   <tr key={order.id} className="border-b border-border hover:bg-accent/30 transition-colors">
                     <td className="py-3 px-4 font-medium text-primary">{order.id}</td>
-                    <td className="py-3 px-4 text-foreground">{order.client}</td>
-                    <td className="py-3 px-4 text-muted-foreground">{order.date}</td>
-                    <td className="py-3 px-4 text-foreground">{order.items.length} items</td>
-                    <td className="py-3 px-4 font-semibold text-foreground">${order.total.toFixed(2)}</td>
+                    <td className="py-3 px-4 text-foreground">{order.client || order.customer?.name || 'Sin cliente'}</td>
+                    <td className="py-3 px-4 text-muted-foreground">
+                      {order.date || (order.createdAt ? new Date(order.createdAt).toLocaleDateString() : '')}
+                    </td>
+                    <td className="py-3 px-4 text-foreground">{order.items?.length || 0} items</td>
+                    <td className="py-3 px-4 font-semibold text-foreground">${(order.total || 0).toFixed(2)}</td>
                     <td className="py-3 px-4">{getStatusBadge(order.status)}</td>
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
@@ -239,6 +349,7 @@ export const OrdersSection = () => {
                           variant="outline" 
                           className="h-8 w-8 p-0"
                           onClick={() => handleView(order)}
+                          title="Ver pedido"
                         >
                           <Eye className="w-4 h-4" />
                         </Button>
@@ -247,14 +358,38 @@ export const OrdersSection = () => {
                           variant="outline" 
                           className="h-8 w-8 p-0"
                           onClick={() => handleEdit(order)}
+                          title="Editar pedido"
                         >
                           <Edit className="w-4 h-4" />
                         </Button>
+                        {(order.status === 'pending' || order.status === 'pendiente') && (
+                          <>
+                            <Button 
+                              size="sm" 
+                              variant="outline" 
+                              className="h-8 w-8 p-0 hover:bg-success/10"
+                              onClick={() => handleConfirm(order.id)}
+                              title="Confirmar pedido"
+                            >
+                              <CheckCircle className="w-4 h-4 text-success" />
+                            </Button>
+                            <Button 
+                              size="sm" 
+                              variant="outline" 
+                              className="h-8 w-8 p-0 hover:bg-destructive/10"
+                              onClick={() => handleCancel(order.id)}
+                              title="Cancelar pedido"
+                            >
+                              <XCircle className="w-4 h-4 text-destructive" />
+                            </Button>
+                          </>
+                        )}
                         <Button 
                           size="sm" 
                           variant="outline" 
                           className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
                           onClick={() => handleDelete(order.id)}
+                          title="Eliminar pedido"
                         >
                           <Trash2 className="w-4 h-4" />
                         </Button>
