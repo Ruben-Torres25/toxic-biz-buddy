@@ -1,3 +1,4 @@
+// src/types/domain.ts
 export interface Product {
   id: string;
   sku: string;
@@ -14,21 +15,31 @@ export interface Customer {
   balance: number;
 }
 
-export interface OrderItem {
-  product: Product | string;
-  qty: number;
-  price: number;
-  subtotal: number;
+export type OrderStatus = 'pending' | 'confirmed' | 'canceled';
+
+export interface OrderItemDTO {
+  productId: string;
+  productName?: string;
+  unitPrice: number;
+  quantity: number;
+  discount?: number;
 }
 
-export interface Order {
+export interface CreateOrderDTO {
+  customerId: string;
+  items: OrderItemDTO[];
+  notes?: string;
+}
+
+export interface OrderDTO {
   id: string;
-  status: 'pending' | 'confirmed' | 'cancelled' | 'delivered';
-  subtotal: number;
-  discount: number;
+  code?: string;            // 👈 NUEVO: PED001, PED002, ...
+  status: OrderStatus;
+  subtotal?: number;
+  discount?: number;
   total: number;
   notes?: string;
-  items: OrderItem[];
+  items: OrderItemDTO[];
   customer?: Customer | string;
   createdAt?: string | Date;
 }

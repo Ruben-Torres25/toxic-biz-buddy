@@ -1,4 +1,5 @@
-import { useState } from "react";
+// src/pages/orders/NewOrder.tsx (o donde tengas este componente)
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,120 +8,187 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2, ArrowLeft, Save } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { api } from "@/lib/api";
+import { Customer, Product } from "@/types/domain";
+import { OrdersAPI } from "@/services/orders.api";
 
-interface OrderItem {
+interface UIOrderItem {
   id: string;
-  product: string;
-  productCode: string;
-  productName: string;
+  productId: string;
+  productCode?: string;
+  productName?: string;
   quantity: number;
-  price: number;
-  discount: number;
+  unitPrice: number;
+  discountPercent: number; // UI solo (se convierte a $ al enviar)
 }
 
 const NewOrder = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [client, setClient] = useState("");
-  const [saleCondition, setSaleCondition] = useState("");
-  const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
-  
-  // Form state for adding products
-  const [currentProduct, setCurrentProduct] = useState("");
-  const [currentQuantity, setCurrentQuantity] = useState(1);
-  const [currentDiscount, setCurrentDiscount] = useState(0);
 
-  const productData: { [key: string]: { price: number, code: string, name: string } } = {
-    "detergente": { price: 85, code: "DET-5L", name: "Detergente 5L" },
-    "lavandina": { price: 45, code: "LAV-5L", name: "Lavandina 5L" },
-    "jabon": { price: 120, code: "JAB-5L", name: "Jabón Líquido 5L" },
-    "desengrasante": { price: 95, code: "DES-1L", name: "Desengrasante 1L" },
-  };
+  // Datos remotos
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+
+  // Estado del form
+  const [clientId, setClientId] = useState("");
+  const [saleCondition, setSaleCondition] = useState("");
+  const [deliveryDate, setDeliveryDate] = useState<string>("");
+
+  const [orderItems, setOrderItems] = useState<UIOrderItem[]>([]);
+
+  // Form para agregar un ítem
+  const [currentProductId, setCurrentProductId] = useState("");
+  const [currentQuantity, setCurrentQuantity] = useState(1);
+  const [currentDiscountPercent, setCurrentDiscountPercent] = useState(0);
+
+  // Carga inicial de clientes y productos desde el backend
+  useEffect(() => {
+    (async () => {
+      try {
+        const [customersRes, productsRes] = await Promise.all([
+          api.get<Customer[]>("/customers"),
+          api.get<Product[]>("/products"),
+        ]);
+        setCustomers(customersRes);
+        setProducts(productsRes);
+      } catch (e: any) {
+        toast({
+          title: "Error cargando datos",
+          description: e?.message ?? "No se pudieron cargar clientes/productos",
+          variant: "destructive",
+        });
+      }
+    })();
+  }, [toast]);
+
+  const selectedProduct = useMemo(
+    () => products.find(p => p.id === currentProductId),
+    [products, currentProductId]
+  );
 
   const handleAddItem = () => {
-    if (!currentProduct) {
+    if (!currentProductId) {
       toast({
-        title: "Error",
+        title: "Falta producto",
         description: "Por favor selecciona un producto",
         variant: "destructive",
       });
       return;
     }
+    if (!selectedProduct) return;
 
-    const product = productData[currentProduct];
-    if (product) {
-      const newItem: OrderItem = {
-        id: Date.now().toString(),
-        product: currentProduct,
-        productCode: product.code,
-        productName: product.name,
-        quantity: currentQuantity,
-        price: product.price,
-        discount: currentDiscount,
-      };
-      
-      setOrderItems([...orderItems, newItem]);
-      
-      // Reset form
-      setCurrentProduct("");
-      setCurrentQuantity(1);
-      setCurrentDiscount(0);
-      
-      toast({
-        title: "Producto agregado",
-        description: `${product.name} ha sido agregado al pedido`,
-      });
-    }
+    const newItem: UIOrderItem = {
+      id: crypto.randomUUID(),
+      productId: selectedProduct.id,
+      productCode: selectedProduct.sku,
+      productName: selectedProduct.name,
+      quantity: currentQuantity,
+      unitPrice: Number(selectedProduct.price ?? 0),
+      discountPercent: currentDiscountPercent,
+    };
+
+    setOrderItems(prev => [...prev, newItem]);
+
+    // Reset form
+    setCurrentProductId("");
+    setCurrentQuantity(1);
+    setCurrentDiscountPercent(0);
+
+    toast({
+      title: "Producto agregado",
+      description: `${selectedProduct.name} fue agregado al pedido`,
+    });
   };
 
   const handleRemoveItem = (id: string) => {
-    setOrderItems(orderItems.filter(item => item.id !== id));
+    setOrderItems(items => items.filter(i => i.id !== id));
   };
 
-  const handleSubmit = () => {
-    if (!client) {
+  // Cálculos
+  const subtotal = useMemo(
+    () => orderItems.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0),
+    [orderItems]
+  );
+
+  const productDiscounts = useMemo(
+    () => orderItems.reduce((sum, i) => {
+      const line = i.quantity * i.unitPrice;
+      return sum + (line * (i.discountPercent / 100));
+    }, 0),
+    [orderItems]
+  );
+
+  const generalDiscount = useMemo(() => {
+    // si usás condición "con-descuento" aplica 10% al neto restante
+    return saleCondition === "con-descuento" ? (subtotal - productDiscounts) * 0.1 : 0;
+  }, [saleCondition, subtotal, productDiscounts]);
+
+  const total = useMemo(
+    () => subtotal - productDiscounts - generalDiscount,
+    [subtotal, productDiscounts, generalDiscount]
+  );
+
+  const handleSubmit = async () => {
+    if (!clientId) {
       toast({
-        title: "Error",
-        description: "Por favor selecciona un cliente",
+        title: "Falta cliente",
+        description: "Selecciona un cliente",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (orderItems.length === 0) {
+      toast({
+        title: "Pedido vacío",
+        description: "Agrega al menos un producto",
         variant: "destructive",
       });
       return;
     }
 
-    if (!saleCondition) {
-      toast({
-        title: "Error",
-        description: "Por favor selecciona una condición de venta",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    toast({
-      title: "Pedido Creado",
-      description: "El pedido ha sido registrado exitosamente.",
+    // Convertir % a monto por línea (lo que espera el backend)
+    const items = orderItems.map(i => {
+      const line = i.unitPrice * i.quantity;
+      const discountAmount = line * (i.discountPercent / 100);
+      return {
+        productId: i.productId,
+        unitPrice: i.unitPrice,
+        quantity: i.quantity,
+        discount: Number(discountAmount.toFixed(2)),
+      };
     });
-    navigate("/");
-  };
 
-  const subtotal = orderItems.reduce((sum, item) => sum + item.quantity * item.price, 0);
-  const productDiscounts = orderItems.reduce((sum, item) => {
-    const itemSubtotal = item.quantity * item.price;
-    return sum + (itemSubtotal * (item.discount / 100));
-  }, 0);
-  const generalDiscount = saleCondition === "con-descuento" ? (subtotal - productDiscounts) * 0.1 : 0;
-  const total = subtotal - productDiscounts - generalDiscount;
+    try {
+      const payload = {
+        customerId: clientId,
+        items,
+        // opcional:
+        // notes: deliveryDate ? `Entrega: ${deliveryDate}` : undefined,
+      };
+
+      await OrdersAPI.create(payload);
+
+      toast({
+        title: "Pedido creado",
+        description: "El pedido fue registrado exitosamente.",
+      });
+      navigate("/");
+    } catch (e: any) {
+      toast({
+        title: "Error al crear",
+        description: e?.message ?? "No se pudo registrar el pedido",
+        variant: "destructive",
+      });
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background p-8">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-8">
-          <Button 
-            variant="ghost" 
-            onClick={() => navigate("/")}
-            className="mb-4"
-          >
+          <Button variant="ghost" onClick={() => navigate("/")} className="mb-4">
             <ArrowLeft className="w-4 h-4 mr-2" />
             Volver
           </Button>
@@ -139,15 +207,16 @@ const NewOrder = () => {
               <CardContent className="space-y-4">
                 <div>
                   <Label htmlFor="client">Cliente</Label>
-                  <Select value={client} onValueChange={setClient}>
+                  <Select value={clientId} onValueChange={setClientId}>
                     <SelectTrigger id="client">
                       <SelectValue placeholder="Seleccionar cliente" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="1">Juan Pérez - Av. Principal 123</SelectItem>
-                      <SelectItem value="2">María García - Calle 45 #67</SelectItem>
-                      <SelectItem value="3">Carlos López - Barrio Centro</SelectItem>
-                      <SelectItem value="4">Ana Rodríguez - Zona Norte</SelectItem>
+                      {customers.map(c => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -167,7 +236,12 @@ const NewOrder = () => {
 
                 <div>
                   <Label htmlFor="date">Fecha de Entrega</Label>
-                  <Input id="date" type="date" />
+                  <Input
+                    id="date"
+                    type="date"
+                    value={deliveryDate}
+                    onChange={(e) => setDeliveryDate(e.target.value)}
+                  />
                 </div>
               </CardContent>
             </Card>
@@ -181,19 +255,20 @@ const NewOrder = () => {
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="col-span-2">
                     <Label htmlFor="product">Producto</Label>
-                    <Select value={currentProduct} onValueChange={setCurrentProduct}>
+                    <Select value={currentProductId} onValueChange={setCurrentProductId}>
                       <SelectTrigger id="product">
                         <SelectValue placeholder="Seleccionar producto" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="detergente">Detergente 5L</SelectItem>
-                        <SelectItem value="lavandina">Lavandina 5L</SelectItem>
-                        <SelectItem value="jabon">Jabón Líquido 5L</SelectItem>
-                        <SelectItem value="desengrasante">Desengrasante 1L</SelectItem>
+                        {products.map(p => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.name} — ${p.price.toFixed(2)}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
-                  
+
                   <div>
                     <Label htmlFor="quantity">Cantidad</Label>
                     <Input
@@ -204,7 +279,7 @@ const NewOrder = () => {
                       onChange={(e) => setCurrentQuantity(parseInt(e.target.value) || 1)}
                     />
                   </div>
-                  
+
                   <div>
                     <Label htmlFor="discount">Descuento (%)</Label>
                     <Input
@@ -212,12 +287,12 @@ const NewOrder = () => {
                       type="number"
                       min="0"
                       max="100"
-                      value={currentDiscount}
-                      onChange={(e) => setCurrentDiscount(parseFloat(e.target.value) || 0)}
+                      value={currentDiscountPercent}
+                      onChange={(e) => setCurrentDiscountPercent(parseFloat(e.target.value) || 0)}
                     />
                   </div>
                 </div>
-                
+
                 <Button className="mt-4" onClick={handleAddItem}>
                   <Plus className="h-4 w-4 mr-2" /> Agregar Producto
                 </Button>
@@ -246,26 +321,22 @@ const NewOrder = () => {
                       </thead>
                       <tbody>
                         {orderItems.map((item) => {
-                          const subtotal = item.quantity * item.price;
-                          const discountAmount = subtotal * (item.discount / 100);
-                          const total = subtotal - discountAmount;
-                          
+                          const line = item.quantity * item.unitPrice;
+                          const discountAmount = line * (item.discountPercent / 100);
+                          const lineTotal = line - discountAmount;
+
                           return (
                             <tr key={item.id} className="border-b">
-                              <td className="p-2 text-sm">{item.productCode}</td>
-                              <td className="p-2 text-sm">{item.productName}</td>
+                              <td className="p-2 text-sm">{item.productCode ?? "-"}</td>
+                              <td className="p-2 text-sm">{item.productName ?? "-"}</td>
                               <td className="p-2 text-center text-sm">{item.quantity}</td>
-                              <td className="p-2 text-right text-sm">${item.price.toFixed(2)}</td>
+                              <td className="p-2 text-right text-sm">${item.unitPrice.toFixed(2)}</td>
                               <td className="p-2 text-right text-sm">
-                                {item.discount > 0 ? `${item.discount}%` : '-'}
+                                {item.discountPercent > 0 ? `${item.discountPercent}%` : '-'}
                               </td>
-                              <td className="p-2 text-right font-semibold text-sm">${total.toFixed(2)}</td>
+                              <td className="p-2 text-right font-semibold text-sm">${lineTotal.toFixed(2)}</td>
                               <td className="p-2 text-center">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => handleRemoveItem(item.id)}
-                                >
+                                <Button variant="ghost" size="icon" onClick={() => handleRemoveItem(item.id)}>
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
                               </td>
@@ -313,18 +384,11 @@ const NewOrder = () => {
                 </div>
 
                 <div className="space-y-2">
-                  <Button 
-                    className="w-full" 
-                    onClick={handleSubmit}
-                  >
+                  <Button className="w-full" onClick={handleSubmit}>
                     <Save className="w-4 h-4 mr-2" />
                     Crear Pedido
                   </Button>
-                  <Button 
-                    variant="outline" 
-                    className="w-full"
-                    onClick={() => navigate("/")}
-                  >
+                  <Button variant="outline" className="w-full" onClick={() => navigate("/")}>
                     Cancelar
                   </Button>
                 </div>

@@ -1,243 +1,260 @@
-import { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+// src/components/modals/EditOrderModal.tsx
+import { useEffect, useMemo, useState } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Card, CardContent } from "@/components/ui/card";
-import { Trash2 } from "lucide-react";
-import { toast } from "@/hooks/use-toast";
+import { Trash2, Save } from "lucide-react";
+import { OrderDTO as Order, OrderItemDTO } from "@/types/domain";
 
-interface OrderItem {
-  productCode: string;
-  product: string;
-  quantity: number;
-  unitPrice: number;
-  discount: number;
-  total: number;
-}
-
-interface Order {
-  id: string;
-  client: string;
-  date: string;
-  total: number;
-  status: string;
-  items: OrderItem[];
-  address?: string;
-  payment?: string;
-}
-
-interface EditOrderModalProps {
+type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   order: Order | null;
-  onSave: (order: Order) => void;
-}
+  onSave: (updated: Partial<Order>) => Promise<void> | void;
+};
 
-export function EditOrderModal({ open, onOpenChange, order, onSave }: EditOrderModalProps) {
-  const [editedOrder, setEditedOrder] = useState<Order | null>(null);
+type UIItem = {
+  id?: string;
+  productId: string;
+  productName?: string;
+  unitPrice: number;   // nunca undefined
+  quantity: number;    // nunca undefined
+  discount: number;    // monto absoluto; nunca undefined
+  lineTotal?: number;  // solo visual
+};
+
+const money = (n: unknown) => `$${Number(n ?? 0).toFixed(2)}`;
+
+export function EditOrderModal({ open, onOpenChange, order, onSave }: Props) {
+  // Normalizar items del pedido a un estado seguro
+  const [items, setItems] = useState<UIItem[]>([]);
+  const [notes, setNotes] = useState<string>("");
 
   useEffect(() => {
-    if (order) {
-      setEditedOrder({ ...order });
+    if (!order) {
+      setItems([]);
+      setNotes("");
+      return;
     }
+
+    const normalized: UIItem[] = (order.items ?? []).map((it: any) => {
+      const unitPrice = Number(it?.unitPrice ?? 0);
+      const quantity = Number(it?.quantity ?? 0);
+      const discount = Number(it?.discount ?? 0);
+      const lineTotal = unitPrice * quantity - discount;
+
+      return {
+        id: it?.id,
+        productId: String(it?.productId ?? ""),
+        productName: it?.productName ?? "",
+        unitPrice,
+        quantity,
+        discount,
+        lineTotal,
+      };
+    });
+
+    setItems(normalized);
+    setNotes(String((order as any)?.notes ?? ""));
   }, [order]);
 
-  if (!order || !editedOrder) return null;
+  // Totales seguros
+  const subtotal = useMemo(
+    () =>
+      items.reduce((acc, it) => acc + Number(it.unitPrice) * Number(it.quantity), 0),
+    [items]
+  );
+  const discounts = useMemo(
+    () => items.reduce((acc, it) => acc + Number(it.discount ?? 0), 0),
+    [items]
+  );
+  const total = useMemo(() => subtotal - discounts, [subtotal, discounts]);
 
-  const handleSave = () => {
-    if (editedOrder) {
-      const newTotal = editedOrder.items.reduce((sum, item) => sum + item.total, 0);
-      const updatedOrder = { ...editedOrder, total: newTotal };
-      onSave(updatedOrder);
-      toast({
-        title: "Pedido actualizado",
-        description: `El pedido ${editedOrder.id} ha sido actualizado exitosamente.`,
-      });
-      onOpenChange(false);
-    }
+  const updateItem = (idx: number, patch: Partial<UIItem>) => {
+    setItems((prev) => {
+      const clone = [...prev];
+      const cur = clone[idx];
+      const next: UIItem = {
+        ...cur,
+        ...patch,
+      };
+      // recalcular lineTotal derivado
+      const u = Number(next.unitPrice ?? 0);
+      const q = Number(next.quantity ?? 0);
+      const d = Number(next.discount ?? 0);
+      next.lineTotal = u * q - d;
+      clone[idx] = next;
+      return clone;
+    });
   };
 
-  const handleItemChange = (index: number, field: keyof OrderItem, value: any) => {
-    const newItems = [...editedOrder.items];
-    newItems[index] = { ...newItems[index], [field]: value };
-    
-    // Recalcular total del item
-    const item = newItems[index];
-    const subtotal = item.quantity * item.unitPrice;
-    const discountAmount = subtotal * (item.discount / 100);
-    item.total = subtotal - discountAmount;
-    
-    setEditedOrder({ ...editedOrder, items: newItems });
+  const removeItem = (idx: number) => {
+    setItems((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  const handleRemoveItem = (index: number) => {
-    const newItems = editedOrder.items.filter((_, i) => i !== index);
-    setEditedOrder({ ...editedOrder, items: newItems });
+  const handleSave = async () => {
+    if (!order) return;
+
+    // preparar payload con defensas
+    const safeItems: OrderItemDTO[] = items.map((i) => ({
+      productId: i.productId,
+      productName: i.productName,
+      unitPrice: Number(i.unitPrice ?? 0),
+      quantity: Number(i.quantity ?? 0),
+      discount: Number(i.discount ?? 0),
+    }));
+
+    await onSave({
+      id: order.id,
+      items: safeItems,
+      notes,
+    });
+
+    onOpenChange(false);
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent
+        // Si preferís no mostrar descripción, usa aria-describedby={undefined} en vez de <DialogDescription/>
+        // aria-describedby={undefined}
+        className="max-w-3xl"
+      >
         <DialogHeader>
-          <DialogTitle>Editar Pedido {order.id}</DialogTitle>
+          <DialogTitle>
+            Editar pedido {order?.code ?? order?.id ?? ""}
+          </DialogTitle>
+          <DialogDescription>
+            Modificá cantidades, precios o descuentos. Los totales se recalculan automáticamente.
+          </DialogDescription>
         </DialogHeader>
-        
+
+        {/* Items */}
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="client">Cliente</Label>
-              <Input
-                id="client"
-                value={editedOrder.client}
-                onChange={(e) => setEditedOrder({...editedOrder, client: e.target.value})}
-              />
-            </div>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b">
+                  <th className="text-left p-2 text-sm text-muted-foreground">Producto</th>
+                  <th className="text-right p-2 text-sm text-muted-foreground">Precio</th>
+                  <th className="text-center p-2 text-sm text-muted-foreground">Cantidad</th>
+                  <th className="text-right p-2 text-sm text-muted-foreground">Descuento ($)</th>
+                  <th className="text-right p-2 text-sm text-muted-foreground">Total línea</th>
+                  <th className="text-center p-2 text-sm text-muted-foreground">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((it, idx) => (
+                  <tr key={it.id ?? `${it.productId}-${idx}`} className="border-b">
+                    <td className="p-2 text-sm">
+                      {it.productName || it.productId || "-"}
+                    </td>
+                    <td className="p-2 text-right text-sm">
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        className="text-right"
+                        value={String(it.unitPrice ?? 0)}
+                        onChange={(e) => updateItem(idx, { unitPrice: Number(e.target.value || 0) })}
+                      />
+                    </td>
+                    <td className="p-2 text-center text-sm">
+                      <Input
+                        type="number"
+                        inputMode="numeric"
+                        className="text-center"
+                        min={0}
+                        value={String(it.quantity ?? 0)}
+                        onChange={(e) => updateItem(idx, { quantity: Number(e.target.value || 0) })}
+                      />
+                    </td>
+                    <td className="p-2 text-right text-sm">
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        className="text-right"
+                        min={0}
+                        value={String(it.discount ?? 0)}
+                        onChange={(e) => updateItem(idx, { discount: Number(e.target.value || 0) })}
+                      />
+                    </td>
+                    <td className="p-2 text-right font-semibold text-sm">
+                      {money(it.lineTotal)}
+                    </td>
+                    <td className="p-2 text-center">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => removeItem(idx)}
+                        title="Quitar ítem"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
 
-            <div>
-              <Label htmlFor="date">Fecha</Label>
-              <Input
-                id="date"
-                type="date"
-                value={editedOrder.date}
-                onChange={(e) => setEditedOrder({...editedOrder, date: e.target.value})}
-              />
-            </div>
+                {items.length === 0 && (
+                  <tr>
+                    <td className="p-4 text-center text-sm text-muted-foreground" colSpan={6}>
+                      Este pedido no tiene ítems.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="status">Estado</Label>
-              <Select
-                value={editedOrder.status}
-                onValueChange={(value) => setEditedOrder({...editedOrder, status: value})}
-              >
-                <SelectTrigger id="status">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pendiente">Pendiente</SelectItem>
-                  <SelectItem value="completado">Completado</SelectItem>
-                  <SelectItem value="cancelado">Cancelado</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Label htmlFor="payment">Método de Pago</Label>
-              <Input
-                id="payment"
-                value={editedOrder.payment || ""}
-                onChange={(e) => setEditedOrder({...editedOrder, payment: e.target.value})}
-              />
-            </div>
-          </div>
-
-          <div>
-            <Label htmlFor="address">Dirección de Entrega</Label>
+          {/* Notas */}
+          <div className="space-y-1">
+            <Label htmlFor="notes">Notas</Label>
             <Input
-              id="address"
-              value={editedOrder.address || ""}
-              onChange={(e) => setEditedOrder({...editedOrder, address: e.target.value})}
+              id="notes"
+              placeholder="Notas del pedido (opcional)"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
             />
           </div>
 
-          <Card>
-            <CardContent className="pt-6">
-              <h3 className="font-semibold mb-4">Productos del Pedido</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b">
-                      <th className="text-left py-2 px-2 text-sm">Código</th>
-                      <th className="text-left py-2 px-2 text-sm">Producto</th>
-                      <th className="text-left py-2 px-2 text-sm">Cantidad</th>
-                      <th className="text-left py-2 px-2 text-sm">P. Unitario</th>
-                      <th className="text-left py-2 px-2 text-sm">Descuento %</th>
-                      <th className="text-left py-2 px-2 text-sm">Total</th>
-                      <th className="text-left py-2 px-2 text-sm">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {editedOrder.items.map((item, index) => (
-                      <tr key={index} className="border-b">
-                        <td className="py-2 px-2">
-                          <Input
-                            value={item.productCode}
-                            onChange={(e) => handleItemChange(index, 'productCode', e.target.value)}
-                            className="h-8"
-                          />
-                        </td>
-                        <td className="py-2 px-2">
-                          <Input
-                            value={item.product}
-                            onChange={(e) => handleItemChange(index, 'product', e.target.value)}
-                            className="h-8"
-                          />
-                        </td>
-                        <td className="py-2 px-2">
-                          <Input
-                            type="number"
-                            value={item.quantity}
-                            onChange={(e) => handleItemChange(index, 'quantity', parseInt(e.target.value))}
-                            className="h-8 w-20"
-                          />
-                        </td>
-                        <td className="py-2 px-2">
-                          <Input
-                            type="number"
-                            step="0.01"
-                            value={item.unitPrice}
-                            onChange={(e) => handleItemChange(index, 'unitPrice', parseFloat(e.target.value))}
-                            className="h-8 w-24"
-                          />
-                        </td>
-                        <td className="py-2 px-2">
-                          <Input
-                            type="number"
-                            value={item.discount}
-                            onChange={(e) => handleItemChange(index, 'discount', parseFloat(e.target.value))}
-                            className="h-8 w-20"
-                          />
-                        </td>
-                        <td className="py-2 px-2 font-semibold">
-                          ${item.total.toFixed(2)}
-                        </td>
-                        <td className="py-2 px-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
-                            onClick={() => handleRemoveItem(index)}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          {/* Resumen */}
+          <div className="ml-auto max-w-sm space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Subtotal</span>
+              <span>{money(subtotal)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Descuentos</span>
+              <span className="text-destructive">-{money(discounts)}</span>
+            </div>
+            <div className="border-t pt-2">
+              <div className="flex justify-between">
+                <span className="font-semibold">Total</span>
+                <span className="font-semibold text-xl">{money(total)}</span>
               </div>
-              
-              <div className="mt-4 text-right">
-                <p className="text-lg font-semibold">
-                  Total del Pedido: ${editedOrder.items.reduce((sum, item) => sum + item.total, 0).toFixed(2)}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
           <Button onClick={handleSave}>
-            Guardar Cambios
+            <Save className="w-4 h-4 mr-2" />
+            Guardar cambios
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
+
+export default EditOrderModal;
