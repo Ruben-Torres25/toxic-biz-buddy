@@ -1,41 +1,39 @@
-// src/services/orders.api.ts
 import { api } from '@/lib/api';
-import { OrderDTO as Order } from '@/types/domain';
+import { OrderDTO } from '@/types/domain';
 
-type Include = ('customer' | 'items')[];
-type Sort = 'code_asc' | 'code_desc' | 'date_desc' | 'date_asc';
-
-const makeQs = (include: Include = ['customer', 'items'], sort: Sort = 'code_desc') => {
-  const params = new URLSearchParams();
-  if (include.length) params.set('include', include.join(','));
-  if (sort) params.set('sort', sort);
-  const qs = params.toString();
-  return qs ? `?${qs}` : '';
-};
+export type OrdersSort = 'code_asc' | 'code_desc' | 'date_desc' | 'date_asc';
 
 export class OrdersAPI {
-  static async list(include: Include = ['customer', 'items'], sort: Sort = 'code_desc'): Promise<Order[]> {
-    return api.get<Order[]>(`/orders${makeQs(include, sort)}`);
+  static async list(
+    include: ('customer'|'items')[] = ['customer','items'],
+    sort: OrdersSort = 'code_desc',
+  ): Promise<OrderDTO[]> {
+    const params: string[] = [];
+    if (include.length) params.push(`include=${include.join(',')}`);
+    if (sort) params.push(`sort=${sort}`);
+    const qs = params.length ? `?${params.join('&')}` : '';
+    return api.get<OrderDTO[]>(`/orders${qs}`);
   }
 
-  static async getById(id: string, include: Include = ['customer', 'items']): Promise<Order> {
-    return api.get<Order>(`/orders/${id}${makeQs(include)}`);
+  static async getById(id: string, include: ('customer'|'items')[] = ['customer','items']): Promise<OrderDTO> {
+    const qs = include.length ? `?include=${include.join(',')}` : '';
+    return api.get<OrderDTO>(`/orders/${id}${qs}`);
   }
 
-  static async create(orderData: Partial<Order>): Promise<Order> {
-    return api.post<Order>('/orders', orderData);
+  static async create(orderData: Partial<OrderDTO>): Promise<OrderDTO> {
+    return api.post<OrderDTO>('/orders', orderData);
   }
 
-  static async update(id: string, orderData: Partial<Order>): Promise<Order> {
-    return api.patch<Order>(`/orders/${id}`, orderData);
+  static async update(id: string, orderData: Partial<OrderDTO>): Promise<OrderDTO> {
+    return api.patch<OrderDTO>(`/orders/${id}`, orderData);
   }
 
-  static async confirm(id: string): Promise<Order> {
-    return api.patch<Order>(`/orders/${id}/confirm`);
+  static async confirm(id: string): Promise<OrderDTO> {
+    return api.patch<OrderDTO>(`/orders/${id}/confirm`);
   }
 
-  static async cancel(id: string): Promise<Order> {
-    return api.patch<Order>(`/orders/${id}/cancel`);
+  static async cancel(id: string): Promise<OrderDTO> {
+    return api.patch<OrderDTO>(`/orders/${id}/cancel`);
   }
 
   static async delete(id: string): Promise<void> {

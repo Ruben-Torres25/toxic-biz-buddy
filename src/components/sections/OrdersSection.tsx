@@ -1,103 +1,107 @@
 // src/components/sections/OrdersSection.tsx
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  Card, CardContent, CardHeader, CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
-  Plus,
-  Search,
-  Filter,
-  Edit,
-  Trash2,
-  Eye,
-  CheckCircle,
-  Clock,
-  XCircle
+  Plus, Search, Filter, Edit, Trash2, Eye, CheckCircle, Clock, XCircle,
 } from "lucide-react";
 import { ViewOrderModal } from "@/components/modals/ViewOrderModal";
 import { EditOrderModal } from "@/components/modals/EditOrderModal";
 import { FilterOrdersModal } from "@/components/modals/FilterOrdersModal";
 import { toast } from "@/hooks/use-toast";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { OrdersAPI } from "@/services/orders.api";
-import { OrderDTO as Order } from "@/types/domain";
+import type { OrderDTO } from "@/types/domain";
+
+type OrderStatus = "pending" | "confirmed" | "canceled";
 
 export const OrdersSection = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedOrder, setSelectedOrder] = useState<any>(null);
+  const [selectedOrder, setSelectedOrder] = useState<OrderDTO | null>(null);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
   const [filters, setFilters] = useState<any>({});
 
-  // Fetch orders ordenados por código desc (PEDxxx)
-  const { data: orders = [], isLoading, error } = useQuery({
-    queryKey: ['orders', 'code_desc'],
-    queryFn: () => OrdersAPI.list(['customer','items'], 'code_desc'),
+  // ---- Data ----
+  const {
+    data: orders = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
+    queryKey: ["orders", { include: "customer,items", sort: "code_desc" }],
+    queryFn: () => OrdersAPI.list(["customer", "items"]).then((os) => {
+      // el back ya devuelve DESC por fecha; si querés forzar por code_desc, hacelo por querystring:
+      // return api.get<OrderDTO[]>('/orders?include=customer,items&sort=code_desc');
+      // Para mantener OrdersAPI simple, reordenamos client-side por el número de PED:
+      const num = (o: OrderDTO) =>
+        Number(String(o.code ?? "").replace(/\D/g, "")) || 0;
+      return [...os].sort((a, b) => num(b) - num(a));
+    }),
     retry: 1,
   });
 
-  // Mutations
+  // ---- Mutations ----
   const confirmOrderMutation = useMutation({
     mutationFn: (id: string) => OrdersAPI.confirm(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
-      toast({ title: "Pedido confirmado", description: "El pedido ha sido confirmado exitosamente." });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      toast({ title: "Pedido confirmado", description: "Se confirmó el pedido." });
     },
-    onError: (error: any) => {
-      toast({ title: "Error al confirmar", description: error.message || "No se pudo confirmar el pedido.", variant: "destructive" });
+    onError: (err: any) => {
+      toast({
+        title: "Error al confirmar",
+        description: err?.message ?? "No se pudo confirmar el pedido.",
+        variant: "destructive",
+      });
     },
   });
 
   const cancelOrderMutation = useMutation({
     mutationFn: (id: string) => OrdersAPI.cancel(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
-      toast({ title: "Pedido cancelado", description: "El pedido ha sido cancelado exitosamente." });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      toast({ title: "Pedido cancelado", description: "Se canceló el pedido." });
     },
-    onError: (error: any) => {
-      toast({ title: "Error al cancelar", description: error.message || "No se pudo cancelar el pedido.", variant: "destructive" });
+    onError: (err: any) => {
+      toast({
+        title: "Error al cancelar",
+        description: err?.message ?? "No se pudo cancelar el pedido.",
+        variant: "destructive",
+      });
     },
   });
 
   const deleteOrderMutation = useMutation({
     mutationFn: (id: string) => OrdersAPI.delete(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
-      toast({ title: "Pedido eliminado", description: "El pedido ha sido eliminado exitosamente." });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      toast({ title: "Pedido eliminado", description: "Se eliminó el pedido." });
     },
-    onError: (error: any) => {
-      toast({ title: "Error al eliminar", description: error.message || "No se pudo eliminar el pedido.", variant: "destructive" });
+    onError: (err: any) => {
+      toast({
+        title: "Error al eliminar",
+        description: err?.message ?? "No se pudo eliminar el pedido.",
+        variant: "destructive",
+      });
     },
   });
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "completado":
-      case "confirmed":
-      case "delivered":
-        return <Badge className="bg-success/10 text-success border-success/20"><CheckCircle className="w-3 h-3 mr-1" />Completado</Badge>;
-      case "pendiente":
-      case "pending":
-        return <Badge className="bg-warning/10 text-warning border-warning/20"><Clock className="w-3 h-3 mr-1" />Pendiente</Badge>;
-      case "cancelado":
-      case "canceled":
-        return <Badge className="bg-destructive/10 text-destructive border-destructive/20"><XCircle className="w-3 h-3 mr-1" />Cancelado</Badge>;
-      default:
-        return <Badge variant="outline">{status}</Badge>;
-    }
-  };
-
-  const handleView = (order: any) => {
+  const handleView = (order: OrderDTO) => {
     setSelectedOrder(order);
     setIsViewModalOpen(true);
   };
 
-  const handleEdit = (order: any) => {
+  const handleEdit = (order: OrderDTO) => {
     setSelectedOrder(order);
     setIsEditModalOpen(true);
   };
@@ -114,54 +118,145 @@ export const OrdersSection = () => {
     cancelOrderMutation.mutate(orderId);
   };
 
-  const handleSaveOrder = async (updatedOrder: any) => {
+  const handleSaveOrder = async (updated: OrderDTO) => {
     try {
-      await OrdersAPI.update(updatedOrder.id, updatedOrder);
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
-      toast({ title: "Pedido actualizado", description: "Los cambios han sido guardados exitosamente." });
-    } catch (error: any) {
-      toast({ title: "Error al actualizar", description: error.message || "No se pudo actualizar el pedido.", variant: "destructive" });
+      await OrdersAPI.update(updated.id, updated);
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      toast({ title: "Pedido actualizado", description: "Cambios guardados." });
+      setIsEditModalOpen(false);
+    } catch (err: any) {
+      toast({
+        title: "Error al actualizar",
+        description: err?.message ?? "No se pudo actualizar el pedido.",
+        variant: "destructive",
+      });
     }
   };
 
-  const handleApplyFilters = (appliedFilters: any) => {
-    setFilters(appliedFilters);
+  const handleApplyFilters = (applied: any) => {
+    setFilters(applied);
   };
 
-  // ====== Filtros en memoria ======
-  let filteredOrders: Order[] = orders;
+  // ---- UI helpers ----
+  const normalizeStatus = (s?: string): OrderStatus | undefined => {
+    if (!s) return undefined;
+    const map: Record<string, OrderStatus> = {
+      pendiente: "pending",
+      confirmado: "confirmed",
+      completado: "confirmed",
+      cancelado: "canceled",
+    };
+    if (map[s]) return map[s];
+    if (["pending", "confirmed", "canceled"].includes(s)) return s as OrderStatus;
+    return undefined;
+  };
 
-  // Búsqueda: por código (PEDxxx), cliente o id
-  if (searchTerm) {
-    const q = searchTerm.toLowerCase().trim();
-    filteredOrders = filteredOrders.filter((order: any) => {
-      const code = (order.code ?? '').toLowerCase();
-      const id = (order.id ?? '').toLowerCase();
-      const client = (order.client ?? order.customer?.name ?? '').toLowerCase();
-      return code.includes(q) || client.includes(q) || id.includes(q);
-    });
-  }
+  const getStatusBadge = (status: OrderStatus | undefined) => {
+    switch (status) {
+      case "confirmed":
+        return (
+          <Badge className="bg-success/10 text-success border-success/20">
+            <CheckCircle className="w-3 h-3 mr-1" />
+            Confirmado
+          </Badge>
+        );
+      case "pending":
+        return (
+          <Badge className="bg-warning/10 text-warning border-warning/20">
+            <Clock className="w-3 h-3 mr-1" />
+            Pendiente
+          </Badge>
+        );
+      case "canceled":
+        return (
+          <Badge className="bg-destructive/10 text-destructive border-destructive/20">
+            <XCircle className="w-3 h-3 mr-1" />
+            Cancelado
+          </Badge>
+        );
+      default:
+        return <Badge variant="outline">—</Badge>;
+    }
+  };
 
-  // Filtros avanzados (si usás el modal)
-  if (Object.keys(filters).length > 0) {
-    filteredOrders = filteredOrders.filter((order: any) => {
-      const clientName = order.client || order.customer?.name || '';
+  const prettyCode = (o: OrderDTO) => {
+    if (o.code) return o.code;
+    const n = (Number(String(o.id).replace(/\D/g, "").slice(-3)) || 0)
+      .toString()
+      .padStart(3, "0");
+    return `PED${n}`;
+  };
 
-      if (filters.client && !clientName.toLowerCase().includes(filters.client.toLowerCase())) return false;
-      if (filters.status && filters.status !== "all" && order.status !== filters.status) return false;
+  // ---- Search + Filters (client-side) ----
+  const filteredOrders = useMemo(() => {
+    let ds: OrderDTO[] = orders ?? [];
+    if (!ds.length) return ds;
 
-      const orderDate = order.date || order.createdAt;
-      if (filters.dateFrom && orderDate && new Date(orderDate) < new Date(filters.dateFrom)) return false;
-      if (filters.dateTo && orderDate && new Date(orderDate) > new Date(filters.dateTo)) return false;
+    // search
+    const term = searchTerm.trim().toLowerCase();
+    if (term) {
+      ds = ds.filter((o) => {
+        const clientName =
+          (typeof o.customer === "object" && o.customer?.name) || "";
+        return (
+          (o.code && o.code.toLowerCase().includes(term)) ||
+          clientName.toLowerCase().includes(term)
+        );
+      });
+    }
 
-      return true;
-    });
-  }
+    // filters
+    if (filters && Object.keys(filters).length > 0) {
+      ds = ds.filter((o) => {
+        const clientName =
+          (typeof o.customer === "object" && o.customer?.name?.toLowerCase()) ||
+          "";
+        if (filters.client && !clientName.includes(filters.client.toLowerCase())) {
+          return false;
+        }
 
+        if (filters.status && filters.status !== "all") {
+          const wanted = normalizeStatus(filters.status);
+          if (wanted && o.status !== wanted) return false;
+        }
+
+        const date = o.createdAt ? new Date(o.createdAt) : null;
+        if (filters.dateFrom && date) {
+          if (date < new Date(filters.dateFrom)) return false;
+        }
+        if (filters.dateTo && date) {
+          if (date > new Date(filters.dateTo)) return false;
+        }
+
+        // city: no lo tenemos en el objeto, se puede extender cuando el back lo provea
+        return true;
+      });
+    }
+
+    // orden final por número de PED (desc), por si vino diferente
+    const num = (oo: OrderDTO) =>
+      Number(String(oo.code ?? "").replace(/\D/g, "")) || 0;
+    ds = [...ds].sort((a, b) => num(b) - num(a));
+
+    return ds;
+  }, [orders, searchTerm, filters]);
+
+  // ---- Loading / Error states ----
   if (isLoading) {
     return (
       <div className="flex justify-center items-center h-64">
-        <div className="text-muted-foreground">Cargando pedidos...</div>
+        <div className="text-muted-foreground">Cargando pedidos…</div>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="space-y-4">
+        <div className="text-destructive">
+          Ocurrió un error al cargar pedidos.
+        </div>
+        <Button variant="outline" onClick={() => refetch()}>Reintentar</Button>
       </div>
     );
   }
@@ -173,26 +268,33 @@ export const OrdersSection = () => {
           <h1 className="text-3xl font-bold text-foreground">Gestión de Pedidos</h1>
           <p className="text-muted-foreground">Administra todos los pedidos de tus clientes</p>
         </div>
-        <Button onClick={() => navigate("/new-order")} className="bg-gradient-to-r from-primary to-primary-hover hover:from-primary-hover hover:to-primary">
+        <Button
+          onClick={() => navigate("/new-order")}
+          className="bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary"
+        >
           <Plus className="w-4 h-4 mr-2" />
           Nuevo Pedido
         </Button>
       </div>
 
-      {/* Filters */}
+      {/* Filtros */}
       <Card>
         <CardContent className="pt-6">
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Buscar por código, cliente o número de pedido…"
+                placeholder="Buscar por código (PEDxxx) o cliente…"
                 className="pl-10"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
-            <Button variant="outline" className="sm:w-auto" onClick={() => setIsFilterModalOpen(true)}>
+            <Button
+              variant="outline"
+              className="sm:w-auto"
+              onClick={() => setIsFilterModalOpen(true)}
+            >
               <Filter className="w-4 h-4 mr-2" />
               Filtros
             </Button>
@@ -200,7 +302,7 @@ export const OrdersSection = () => {
         </CardContent>
       </Card>
 
-      {/* Orders Table */}
+      {/* Tabla */}
       <Card>
         <CardHeader>
           <CardTitle>Lista de Pedidos</CardTitle>
@@ -210,7 +312,7 @@ export const OrdersSection = () => {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border">
-                  <th className="text-left py-3 px-4 font-semibold text-foreground">Pedido</th>
+                  <th className="text-left py-3 px-4 font-semibold text-foreground">Código</th>
                   <th className="text-left py-3 px-4 font-semibold text-foreground">Cliente</th>
                   <th className="text-left py-3 px-4 font-semibold text-foreground">Fecha</th>
                   <th className="text-left py-3 px-4 font-semibold text-foreground">Items</th>
@@ -220,44 +322,95 @@ export const OrdersSection = () => {
                 </tr>
               </thead>
               <tbody>
-                {filteredOrders.map((order: any) => (
-                  <tr key={order.id} className="border-b border-border hover:bg-accent/30 transition-colors">
-                    <td className="py-3 px-4 font-medium text-primary">
-                      {/* 👇 Mostramos el código PEDxxx; caemos a id si todavía no tiene */}
-                      {order.code ?? order.id}
-                    </td>
-                    <td className="py-3 px-4 text-foreground">{order.client || order.customer?.name || 'Sin cliente'}</td>
-                    <td className="py-3 px-4 text-muted-foreground">
-                      {order.date || (order.createdAt ? new Date(order.createdAt).toLocaleDateString() : '')}
-                    </td>
-                    <td className="py-3 px-4 text-foreground">{order.items?.length || 0} items</td>
-                    <td className="py-3 px-4 font-semibold text-foreground">${(order.total || 0).toFixed(2)}</td>
-                    <td className="py-3 px-4">{getStatusBadge(order.status)}</td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2">
-                        <Button size="sm" variant="outline" className="h-8 w-8 p-0" onClick={() => handleView(order)} title="Ver pedido">
-                          <Eye className="w-4 h-4" />
-                        </Button>
-                        <Button size="sm" variant="outline" className="h-8 w-8 p-0" onClick={() => handleEdit(order)} title="Editar pedido">
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        {(order.status === 'pending' || order.status === 'pendiente') && (
-                          <>
-                            <Button size="sm" variant="outline" className="h-8 w-8 p-0 hover:bg-success/10" onClick={() => handleConfirm(order.id)} title="Confirmar pedido">
-                              <CheckCircle className="w-4 h-4 text-success" />
-                            </Button>
-                            <Button size="sm" variant="outline" className="h-8 w-8 p-0 hover:bg-destructive/10" onClick={() => handleCancel(order.id)} title="Cancelar pedido">
-                              <XCircle className="w-4 h-4 text-destructive" />
-                            </Button>
-                          </>
-                        )}
-                        <Button size="sm" variant="outline" className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive" onClick={() => handleDelete(order.id)} title="Eliminar pedido">
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
+                {filteredOrders.map((order) => {
+                  const customerName =
+                    (typeof order.customer === "object" && order.customer?.name) ||
+                    "Sin cliente";
+                  const created =
+                    order.createdAt
+                      ? new Date(order.createdAt).toLocaleDateString()
+                      : "";
+
+                  return (
+                    <tr
+                      key={order.id}
+                      className="border-b border-border hover:bg-accent/30 transition-colors"
+                    >
+                      <td className="py-3 px-4 font-medium text-primary">
+                        {prettyCode(order)}
+                      </td>
+                      <td className="py-3 px-4 text-foreground">{customerName}</td>
+                      <td className="py-3 px-4 text-muted-foreground">{created}</td>
+                      <td className="py-3 px-4 text-foreground">{order.items?.length ?? 0} items</td>
+                      <td className="py-3 px-4 font-semibold text-foreground">
+                        ${Number(order.total ?? 0).toFixed(2)}
+                      </td>
+                      <td className="py-3 px-4">{getStatusBadge(order.status)}</td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 w-8 p-0"
+                            onClick={() => handleView(order)}
+                            title="Ver pedido"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 w-8 p-0"
+                            onClick={() => handleEdit(order)}
+                            title="Editar pedido"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </Button>
+
+                          {order.status === "pending" && (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 w-8 p-0 hover:bg-success/10"
+                                onClick={() => handleConfirm(order.id)}
+                                title="Confirmar pedido"
+                              >
+                                <CheckCircle className="w-4 h-4 text-success" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 w-8 p-0 hover:bg-destructive/10"
+                                onClick={() => handleCancel(order.id)}
+                                title="Cancelar pedido"
+                              >
+                                <XCircle className="w-4 h-4 text-destructive" />
+                              </Button>
+                            </>
+                          )}
+
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => handleDelete(order.id)}
+                            title="Eliminar pedido"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filteredOrders.length === 0 && (
+                  <tr>
+                    <td className="py-6 px-4 text-muted-foreground" colSpan={7}>
+                      No se encontraron pedidos con esos criterios.
                     </td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
@@ -265,9 +418,22 @@ export const OrdersSection = () => {
       </Card>
 
       {/* Modals */}
-      <ViewOrderModal open={isViewModalOpen} onOpenChange={setIsViewModalOpen} order={selectedOrder} />
-      <EditOrderModal open={isEditModalOpen} onOpenChange={setIsEditModalOpen} order={selectedOrder} onSave={handleSaveOrder} />
-      <FilterOrdersModal open={isFilterModalOpen} onOpenChange={setIsFilterModalOpen} onApplyFilters={handleApplyFilters} />
+      <ViewOrderModal
+        open={isViewModalOpen}
+        onOpenChange={setIsViewModalOpen}
+        order={selectedOrder}
+      />
+      <EditOrderModal
+        open={isEditModalOpen}
+        onOpenChange={setIsEditModalOpen}
+        order={selectedOrder ?? undefined}
+        onSave={handleSaveOrder}
+      />
+      <FilterOrdersModal
+        open={isFilterModalOpen}
+        onOpenChange={setIsFilterModalOpen}
+        onApplyFilters={handleApplyFilters}
+      />
     </div>
   );
 };
