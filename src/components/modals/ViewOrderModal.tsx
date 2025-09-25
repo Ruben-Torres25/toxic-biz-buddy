@@ -1,3 +1,4 @@
+// src/components/modals/ViewOrderModal.tsx
 import * as React from "react";
 import {
   Dialog,
@@ -60,6 +61,7 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order }) =
 
   const items = Array.isArray((order as any)?.items) ? (order as any).items : [];
 
+  // totales a partir de ítems
   const subtotal = items.reduce(
     (acc: number, it: any) => acc + Number(it.unitPrice ?? 0) * Number(it.quantity ?? 0),
     0
@@ -71,14 +73,10 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order }) =
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>
-            Pedido {order?.code ?? order?.id ?? "—"}
-          </DialogTitle>
-          {/* Evita el warning de accesibilidad de Radix */}
+          <DialogTitle>Pedido {order?.code ?? order?.id ?? "—"}</DialogTitle>
           <DialogDescription>Resumen del pedido seleccionado</DialogDescription>
         </DialogHeader>
 
-        {/* Datos principales */}
         <div className="grid gap-4">
           <div className="grid sm:grid-cols-2 gap-3">
             <div className="rounded-lg border p-3">
@@ -119,7 +117,7 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order }) =
             <div className="p-3 border-b">
               <div className="font-medium">Ítems</div>
               <div className="text-xs text-muted-foreground">
-                {items.length} {items.length === 1 ? "ítem" : "ítems"}
+                {items.length} {items.length === 1 ? "item" : "items"}
               </div>
             </div>
             <div className="max-h-72 overflow-auto">
@@ -129,14 +127,15 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order }) =
                     <th className="text-left p-2 text-muted-foreground font-medium">Producto</th>
                     <th className="text-right p-2 text-muted-foreground font-medium">Precio</th>
                     <th className="text-center p-2 text-muted-foreground font-medium">Cant.</th>
-                    <th className="text-right p-2 text-muted-foreground font-medium">Desc.</th>
+                    <th className="text-right p-2 text-muted-foreground font-medium">Desc. (%)</th>
+                    <th className="text-right p-2 text-muted-foreground font-medium">Desc. ($)</th>
                     <th className="text-right p-2 text-muted-foreground font-medium">Total</th>
                   </tr>
                 </thead>
                 <tbody>
                   {items.length === 0 && (
                     <tr>
-                      <td className="p-4 text-center text-muted-foreground" colSpan={5}>
+                      <td className="p-4 text-center text-muted-foreground" colSpan={6}>
                         Sin ítems
                       </td>
                     </tr>
@@ -145,16 +144,17 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order }) =
                     const unitPrice = Number(it.unitPrice ?? 0);
                     const qty = Number(it.quantity ?? 0);
                     const discount = Number(it.discount ?? 0);
-                    const line = unitPrice * qty - discount;
+                    const base = unitPrice * qty;
+                    const pct = base > 0 ? (discount / base) * 100 : 0;
+                    const line = base - discount;
 
                     return (
                       <tr key={it.id} className="border-b last:border-b-0">
                         <td className="p-2">{it.productName ?? it.product?.name ?? "—"}</td>
                         <td className="p-2 text-right">{fmtMoney(unitPrice)}</td>
                         <td className="p-2 text-center">{qty}</td>
-                        <td className="p-2 text-right">
-                          {discount > 0 ? `- ${fmtMoney(discount)}` : "—"}
-                        </td>
+                        <td className="p-2 text-right">{pct ? `${pct.toFixed(2)}%` : "0%"}</td>
+                        <td className="p-2 text-right">{fmtMoney(discount)}</td>
                         <td className="p-2 text-right font-medium">{fmtMoney(line)}</td>
                       </tr>
                     );
@@ -186,7 +186,6 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order }) =
             </div>
           </div>
 
-          {/* Notas (si el back las devuelve) */}
           {(order as any)?.notes && (
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground mb-1">Notas</div>

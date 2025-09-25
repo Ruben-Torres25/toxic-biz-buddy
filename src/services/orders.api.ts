@@ -1,26 +1,31 @@
 import { api } from '@/lib/api';
-import { OrderDTO } from '@/types/domain';
+import type { OrderDTO, CreateOrderDTO } from '@/types/domain';
 
-export type OrdersSort = 'code_asc' | 'code_desc' | 'date_desc' | 'date_asc';
+type Include = ('customer'|'items')[];
+type Sort = 'code_desc' | 'code_asc' | 'date_desc' | 'date_asc';
+
+function qs(params: Record<string, string | undefined>) {
+  const sp = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => { if (v) sp.set(k, v); });
+  const s = sp.toString();
+  return s ? `?${s}` : '';
+}
 
 export class OrdersAPI {
-  static async list(
-    include: ('customer'|'items')[] = ['customer','items'],
-    sort: OrdersSort = 'code_desc',
-  ): Promise<OrderDTO[]> {
-    const params: string[] = [];
-    if (include.length) params.push(`include=${include.join(',')}`);
-    if (sort) params.push(`sort=${sort}`);
-    const qs = params.length ? `?${params.join('&')}` : '';
-    return api.get<OrderDTO[]>(`/orders${qs}`);
+  static async list(include: Include = ['customer','items'], sort: Sort = 'code_desc'): Promise<OrderDTO[]> {
+    const query = qs({
+      include: include.join(','),
+      sort,
+    });
+    return api.get<OrderDTO[]>(`/orders${query}`);
   }
 
-  static async getById(id: string, include: ('customer'|'items')[] = ['customer','items']): Promise<OrderDTO> {
-    const qs = include.length ? `?include=${include.join(',')}` : '';
-    return api.get<OrderDTO>(`/orders/${id}${qs}`);
+  static async getById(id: string, include: Include = ['customer','items']): Promise<OrderDTO> {
+    const query = qs({ include: include.join(',') });
+    return api.get<OrderDTO>(`/orders/${id}${query}`);
   }
 
-  static async create(orderData: Partial<OrderDTO>): Promise<OrderDTO> {
+  static async create(orderData: CreateOrderDTO): Promise<OrderDTO> {
     return api.post<OrderDTO>('/orders', orderData);
   }
 

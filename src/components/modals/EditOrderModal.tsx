@@ -25,16 +25,16 @@ type UIItem = {
   id?: string;
   productId: string;
   productName?: string;
-  unitPrice: number;   // nunca undefined
-  quantity: number;    // nunca undefined
-  discount: number;    // monto absoluto; nunca undefined
-  lineTotal?: number;  // solo visual
+  unitPrice: number;     // read-only
+  quantity: number;
+  discountPct: number;   // UI en porcentaje (0-100)
+  discountAmount: number; // derivado para mostrar el $ (unitPrice*qty*%/100)
+  lineTotal: number;     // derivado
 };
 
 const money = (n: unknown) => `$${Number(n ?? 0).toFixed(2)}`;
 
 export function EditOrderModal({ open, onOpenChange, order, onSave }: Props) {
-  // Normalizar items del pedido a un estado seguro
   const [items, setItems] = useState<UIItem[]>([]);
   const [notes, setNotes] = useState<string>("");
 
@@ -48,8 +48,11 @@ export function EditOrderModal({ open, onOpenChange, order, onSave }: Props) {
     const normalized: UIItem[] = (order.items ?? []).map((it: any) => {
       const unitPrice = Number(it?.unitPrice ?? 0);
       const quantity = Number(it?.quantity ?? 0);
-      const discount = Number(it?.discount ?? 0);
-      const lineTotal = unitPrice * quantity - discount;
+      const discountAmount = Number(it?.discount ?? 0);
+      const base = unitPrice * quantity;
+      // convertir $ a % seguro (0..100)
+      const discountPct = base > 0 ? Math.min(100, Math.max(0, (discountAmount / base) * 100)) : 0;
+      const lineTotal = base - discountAmount;
 
       return {
         id: it?.id,
@@ -57,7 +60,8 @@ export function EditOrderModal({ open, onOpenChange, order, onSave }: Props) {
         productName: it?.productName ?? "",
         unitPrice,
         quantity,
-        discount,
+        discountPct: Number(discountPct.toFixed(2)),
+        discountAmount,
         lineTotal,
       };
     });
@@ -66,31 +70,32 @@ export function EditOrderModal({ open, onOpenChange, order, onSave }: Props) {
     setNotes(String((order as any)?.notes ?? ""));
   }, [order]);
 
-  // Totales seguros
   const subtotal = useMemo(
-    () =>
-      items.reduce((acc, it) => acc + Number(it.unitPrice) * Number(it.quantity), 0),
+    () => items.reduce((acc, it) => acc + it.unitPrice * it.quantity, 0),
     [items]
   );
-  const discounts = useMemo(
-    () => items.reduce((acc, it) => acc + Number(it.discount ?? 0), 0),
+  const discountTotal = useMemo(
+    () => items.reduce((acc, it) => acc + it.discountAmount, 0),
     [items]
   );
-  const total = useMemo(() => subtotal - discounts, [subtotal, discounts]);
+  const total = useMemo(() => subtotal - discountTotal, [subtotal, discountTotal]);
+
+  const recalc = (raw: Omit<UIItem, "discountAmount" | "lineTotal">): UIItem => {
+    const base = raw.unitPrice * raw.quantity;
+    const discountAmount = base * (Math.min(100, Math.max(0, raw.discountPct)) / 100);
+    const lineTotal = base - discountAmount;
+    return {
+      ...raw,
+      discountAmount,
+      lineTotal,
+    };
+    };
 
   const updateItem = (idx: number, patch: Partial<UIItem>) => {
     setItems((prev) => {
       const clone = [...prev];
       const cur = clone[idx];
-      const next: UIItem = {
-        ...cur,
-        ...patch,
-      };
-      // recalcular lineTotal derivado
-      const u = Number(next.unitPrice ?? 0);
-      const q = Number(next.quantity ?? 0);
-      const d = Number(next.discount ?? 0);
-      next.lineTotal = u * q - d;
+      const next = recalc({ ...cur, ...patch });
       clone[idx] = next;
       return clone;
     });
@@ -103,13 +108,13 @@ export function EditOrderModal({ open, onOpenChange, order, onSave }: Props) {
   const handleSave = async () => {
     if (!order) return;
 
-    // preparar payload con defensas
+    // Convertimos % → monto ($) para el backend
     const safeItems: OrderItemDTO[] = items.map((i) => ({
       productId: i.productId,
       productName: i.productName,
-      unitPrice: Number(i.unitPrice ?? 0),
-      quantity: Number(i.quantity ?? 0),
-      discount: Number(i.discount ?? 0),
+      unitPrice: Number(i.unitPrice),
+      quantity: Number(i.quantity),
+      discount: Number(i.discountAmount), // ← el back espera monto
     }));
 
     await onSave({
@@ -123,21 +128,14 @@ export function EditOrderModal({ open, onOpenChange, order, onSave }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        // Si preferís no mostrar descripción, usa aria-describedby={undefined} en vez de <DialogDescription/>
-        // aria-describedby={undefined}
-        className="max-w-3xl"
-      >
+      <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle>
-            Editar pedido {order?.code ?? order?.id ?? ""}
-          </DialogTitle>
+          <DialogTitle>Editar pedido {order?.code ?? order?.id ?? ""}</DialogTitle>
           <DialogDescription>
-            Modificá cantidades, precios o descuentos. Los totales se recalculan automáticamente.
+            Modificá <strong>cantidades</strong> y <strong>descuento (%)</strong>. El precio se gestiona en <strong>Productos</strong>.
           </DialogDescription>
         </DialogHeader>
 
-        {/* Items */}
         <div className="space-y-4">
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
@@ -146,7 +144,8 @@ export function EditOrderModal({ open, onOpenChange, order, onSave }: Props) {
                   <th className="text-left p-2 text-sm text-muted-foreground">Producto</th>
                   <th className="text-right p-2 text-sm text-muted-foreground">Precio</th>
                   <th className="text-center p-2 text-sm text-muted-foreground">Cantidad</th>
-                  <th className="text-right p-2 text-sm text-muted-foreground">Descuento ($)</th>
+                  <th className="text-right p-2 text-sm text-muted-foreground">Desc. (%)</th>
+                  <th className="text-right p-2 text-sm text-muted-foreground">Desc. ($)</th>
                   <th className="text-right p-2 text-sm text-muted-foreground">Total línea</th>
                   <th className="text-center p-2 text-sm text-muted-foreground">Acciones</th>
                 </tr>
@@ -154,41 +153,61 @@ export function EditOrderModal({ open, onOpenChange, order, onSave }: Props) {
               <tbody>
                 {items.map((it, idx) => (
                   <tr key={it.id ?? `${it.productId}-${idx}`} className="border-b">
-                    <td className="p-2 text-sm">
-                      {it.productName || it.productId || "-"}
-                    </td>
+                    <td className="p-2 text-sm">{it.productName || it.productId || "-"}</td>
+
+                    {/* PRECIO SOLO LECTURA */}
                     <td className="p-2 text-right text-sm">
                       <Input
                         type="number"
                         inputMode="decimal"
-                        className="text-right"
-                        value={String(it.unitPrice ?? 0)}
-                        onChange={(e) => updateItem(idx, { unitPrice: Number(e.target.value || 0) })}
+                        className="text-right opacity-70 cursor-not-allowed"
+                        value={String(it.unitPrice)}
+                        readOnly
+                        disabled
+                        title="El precio se modifica desde la sección Productos"
                       />
                     </td>
+
+                    {/* CANTIDAD */}
                     <td className="p-2 text-center text-sm">
                       <Input
                         type="number"
                         inputMode="numeric"
                         className="text-center"
                         min={0}
-                        value={String(it.quantity ?? 0)}
-                        onChange={(e) => updateItem(idx, { quantity: Number(e.target.value || 0) })}
+                        value={String(it.quantity)}
+                        onChange={(e) =>
+                          updateItem(idx, { quantity: Number(e.target.value || 0) })
+                        }
                       />
                     </td>
+
+                    {/* DESCUENTO % */}
                     <td className="p-2 text-right text-sm">
                       <Input
                         type="number"
                         inputMode="decimal"
                         className="text-right"
                         min={0}
-                        value={String(it.discount ?? 0)}
-                        onChange={(e) => updateItem(idx, { discount: Number(e.target.value || 0) })}
+                        max={100}
+                        step="0.01"
+                        value={String(it.discountPct)}
+                        onChange={(e) =>
+                          updateItem(idx, { discountPct: Number(e.target.value || 0) })
+                        }
                       />
                     </td>
+
+                    {/* DESCUENTO $ (solo lectura, derivado) */}
+                    <td className="p-2 text-right text-sm">
+                      {money(it.discountAmount)}
+                    </td>
+
+                    {/* TOTAL LÍNEA */}
                     <td className="p-2 text-right font-semibold text-sm">
                       {money(it.lineTotal)}
                     </td>
+
                     <td className="p-2 text-center">
                       <Button
                         size="icon"
@@ -201,10 +220,9 @@ export function EditOrderModal({ open, onOpenChange, order, onSave }: Props) {
                     </td>
                   </tr>
                 ))}
-
                 {items.length === 0 && (
                   <tr>
-                    <td className="p-4 text-center text-sm text-muted-foreground" colSpan={6}>
+                    <td className="p-4 text-center text-sm text-muted-foreground" colSpan={7}>
                       Este pedido no tiene ítems.
                     </td>
                   </tr>
@@ -232,7 +250,7 @@ export function EditOrderModal({ open, onOpenChange, order, onSave }: Props) {
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Descuentos</span>
-              <span className="text-destructive">-{money(discounts)}</span>
+              <span className="text-destructive">-{money(discountTotal)}</span>
             </div>
             <div className="border-t pt-2">
               <div className="flex justify-between">

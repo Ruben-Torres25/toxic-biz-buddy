@@ -1,10 +1,11 @@
-// src/types/domain.ts
 export interface Product {
   id: string;
   sku: string;
   name: string;
   price: number;
   stock: number;
+  reserved?: number;
+  available?: number;
 }
 
 export interface Customer {
@@ -23,27 +24,28 @@ export interface OrderItemDTO {
   unitPrice: number;
   quantity: number;
   discount?: number;
-}
-
-export interface CreateOrderDTO {
-  customerId: string;
-  items: OrderItemDTO[];
-  notes?: string;
+  lineTotal?: number;
 }
 
 export interface OrderDTO {
   id: string;
-  code?: string;            // 👈 NUEVO: PED001, PED002, ...
+  code?: string | null;
   status: OrderStatus;
-  subtotal?: number;
-  discount?: number;
   total: number;
-  notes?: string;
-  items: OrderItemDTO[];
+  notes?: string | null;
+  items?: OrderItemDTO[];
   customer?: Customer | string;
   createdAt?: string | Date;
+  updatedAt?: string | Date;
 }
 
+export interface CreateOrderDTO {
+  customerId?: string;
+  items: OrderItemDTO[];
+  notes?: string;
+}
+
+// Caja (si lo usás)
 export interface CashMovement {
   id: string;
   type: 'income' | 'expense';

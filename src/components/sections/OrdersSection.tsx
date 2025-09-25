@@ -2,9 +2,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  Card, CardContent, CardHeader, CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -37,16 +35,14 @@ export const OrdersSection = () => {
     isLoading,
     isError,
     refetch,
-  } = useQuery({
+  } = useQuery<OrderDTO[]>({
     queryKey: ["orders", { include: "customer,items", sort: "code_desc" }],
-    queryFn: () => OrdersAPI.list(["customer", "items"]).then((os) => {
-      // el back ya devuelve DESC por fecha; si querés forzar por code_desc, hacelo por querystring:
-      // return api.get<OrderDTO[]>('/orders?include=customer,items&sort=code_desc');
-      // Para mantener OrdersAPI simple, reordenamos client-side por el número de PED:
-      const num = (o: OrderDTO) =>
-        Number(String(o.code ?? "").replace(/\D/g, "")) || 0;
-      return [...os].sort((a, b) => num(b) - num(a));
-    }),
+    queryFn: () =>
+      OrdersAPI.list(["customer", "items"]).then((os) => {
+        const num = (o: OrderDTO) =>
+          Number(String(o.code ?? "").replace(/\D/g, "")) || 0;
+        return [...os].sort((a, b) => num(b) - num(a));
+      }),
     retry: 1,
   });
 
@@ -118,10 +114,44 @@ export const OrdersSection = () => {
     cancelOrderMutation.mutate(orderId);
   };
 
+  // ⬇️ Actualización optimista + recálculo del total en UI (siempre desde ítems)
   const handleSaveOrder = async (updated: OrderDTO) => {
     try {
       await OrdersAPI.update(updated.id, updated);
+
+      const key = ["orders", { include: "customer,items", sort: "code_desc" }];
+      queryClient.setQueryData<OrderDTO[] | undefined>(key, (old) => {
+        if (!old) return old;
+
+        const newItems = Array.isArray((updated as any).items)
+          ? (updated as any).items
+          : undefined;
+
+        const recomputedTotal = newItems
+          ? newItems.reduce(
+              (acc: number, it: any) =>
+                acc +
+                Number(it?.unitPrice ?? 0) * Number(it?.quantity ?? 0) -
+                Number(it?.discount ?? 0),
+              0
+            )
+          : undefined;
+
+        return old.map((o) =>
+          o.id === updated.id
+            ? {
+                ...o,
+                items: newItems ?? o.items,
+                // mostramos SIEMPRE el total recomputado desde ítems
+                total: recomputedTotal ?? o.total,
+                ...(updated as any).notes ? { notes: (updated as any).notes } : {},
+              }
+            : o
+        );
+      });
+
       queryClient.invalidateQueries({ queryKey: ["orders"] });
+
       toast({ title: "Pedido actualizado", description: "Cambios guardados." });
       setIsEditModalOpen(false);
     } catch (err: any) {
@@ -146,7 +176,7 @@ export const OrdersSection = () => {
       completado: "confirmed",
       cancelado: "canceled",
     };
-    if (map[s]) return map[s];
+    if (map[s]) return map[s] as OrderStatus;
     if (["pending", "confirmed", "canceled"].includes(s)) return s as OrderStatus;
     return undefined;
   };
@@ -228,12 +258,11 @@ export const OrdersSection = () => {
           if (date > new Date(filters.dateTo)) return false;
         }
 
-        // city: no lo tenemos en el objeto, se puede extender cuando el back lo provea
         return true;
       });
     }
 
-    // orden final por número de PED (desc), por si vino diferente
+    // orden final por número de PED (desc)
     const num = (oo: OrderDTO) =>
       Number(String(oo.code ?? "").replace(/\D/g, "")) || 0;
     ds = [...ds].sort((a, b) => num(b) - num(a));
@@ -331,6 +360,22 @@ export const OrdersSection = () => {
                       ? new Date(order.createdAt).toLocaleDateString()
                       : "";
 
+                  // cantidad total (sumatoria de cantidades), y prefijo "items"
+                  const qtyTotal = Array.isArray(order.items)
+                    ? order.items.reduce((acc, it: any) => acc + Number(it?.quantity ?? 0), 0)
+                    : 0;
+
+                  // total: SIEMPRE desde los ítems para ver cambios apenas guardás
+                  const totalFromItems = Array.isArray(order.items)
+                    ? order.items.reduce(
+                        (acc, it: any) =>
+                          acc +
+                          Number(it?.unitPrice ?? 0) * Number(it?.quantity ?? 0) -
+                          Number(it?.discount ?? 0),
+                        0
+                      )
+                    : Number(order.total ?? 0);
+
                   return (
                     <tr
                       key={order.id}
@@ -341,10 +386,15 @@ export const OrdersSection = () => {
                       </td>
                       <td className="py-3 px-4 text-foreground">{customerName}</td>
                       <td className="py-3 px-4 text-muted-foreground">{created}</td>
-                      <td className="py-3 px-4 text-foreground">{order.items?.length ?? 0} items</td>
-                      <td className="py-3 px-4 font-semibold text-foreground">
-                        ${Number(order.total ?? 0).toFixed(2)}
+
+                      <td className="py-3 px-4 text-foreground">
+                        {qtyTotal} {qtyTotal === 1 ? "item" : "items"}
                       </td>
+
+                      <td className="py-3 px-4 font-semibold text-foreground">
+                        ${Number(totalFromItems).toFixed(2)}
+                      </td>
+
                       <td className="py-3 px-4">{getStatusBadge(order.status)}</td>
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-2">
@@ -432,7 +482,7 @@ export const OrdersSection = () => {
       <FilterOrdersModal
         open={isFilterModalOpen}
         onOpenChange={setIsFilterModalOpen}
-        onApplyFilters={handleApplyFilters}
+        onApplyFilters={setFilters}
       />
     </div>
   );
