@@ -1,232 +1,381 @@
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { 
-  DollarSign, 
-  TrendingUp, 
-  TrendingDown,
-  Calendar,
-  Download,
-  Wallet,
+import { toast } from "@/hooks/use-toast";
+import { CashAPI, CashCurrent } from "@/services/cash.api";
+import type { CashMovement } from "@/types/domain";
+import {
+  AlertCircle,
   CreditCard,
-  Banknote
+  TrendingUp,
+  TrendingDown,
+  History,
+  PiggyBank,
+  ArrowDownToLine,
+  ArrowUpFromLine,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
-export const CashSection = () => {
-  const cashData = {
-    openingBalance: 500.00,
-    currentBalance: 1245.50,
-    totalSales: 2150.75,
-    totalExpenses: 405.25,
-    isOpen: true,
-    openedAt: "08:30 AM",
-    lastTransaction: "14:30 PM"
-  };
+export function CashSection() {
+  const queryClient = useQueryClient();
 
-  const transactions = [
-    {
-      id: "TXN001",
-      type: "sale",
-      description: "Venta - Pedido #PED001",
-      amount: 450.00,
-      time: "14:30",
-      method: "efectivo"
+  const [movType, setMovType] = useState<"deposit" | "withdrawal">("deposit");
+  const [movAmount, setMovAmount] = useState<string>("");
+  const [movDesc, setMovDesc] = useState<string>("");
+  const [openAmount, setOpenAmount] = useState<string>("0");
+
+  // Traemos todo desde /cash/current (incluye isOpen)
+  const {
+    data: current,
+    isLoading: loadingCurrent,
+    refetch: refetchCurrent,
+  } = useQuery<CashCurrent>({
+    queryKey: ["cash", "current"],
+    queryFn: () => CashAPI.current(),
+    retry: 1,
+  });
+
+  const { data: movements = [], isLoading: loadingMovs } = useQuery<CashMovement[]>({
+    queryKey: ["cash", "movements"],
+    queryFn: () => CashAPI.movements(),
+    retry: 1,
+  });
+
+  const isOpen = current?.isOpen;
+
+  const addMovement = useMutation({
+    mutationFn: (p: { amount: number; type: string; description: string }) => CashAPI.movement(p as any),
+    onSuccess: async () => {
+      toast({ title: "Movimiento registrado" });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["cash", "current"] }),
+        queryClient.invalidateQueries({ queryKey: ["cash", "movements"] }),
+      ]);
+      setMovAmount("");
+      setMovDesc("");
     },
-    {
-      id: "TXN002", 
-      type: "sale",
-      description: "Venta - Pedido #PED002",
-      amount: 230.50,
-      time: "13:15",
-      method: "tarjeta"
+    onError: (e: any) => {
+      toast({
+        title: "No se pudo registrar el movimiento",
+        description: e?.message ?? "Error desconocido",
+        variant: "destructive",
+      });
     },
-    {
-      id: "TXN003",
-      type: "expense", 
-      description: "Compra suministros oficina",
-      amount: -45.25,
-      time: "12:00",
-      method: "efectivo"
+  });
+
+  const openCash = useMutation({
+    mutationFn: (amount: number) => CashAPI.open(amount),
+    onSuccess: async () => {
+      toast({ title: "Caja abierta" });
+      await refetchCurrent();
     },
-    {
-      id: "TXN004",
-      type: "sale",
-      description: "Venta - Pedido #PED003",
-      amount: 680.00,
-      time: "11:45",
-      method: "transferencia"
-    }
-  ];
+    onError: (e: any) => {
+      toast({
+        title: "No se pudo abrir la caja",
+        description: e?.message ?? "Error",
+        variant: "destructive",
+      });
+    },
+  });
 
-  const getTransactionIcon = (type: string) => {
-    switch (type) {
-      case "sale":
-        return <TrendingUp className="w-4 h-4 text-success" />;
-      case "expense":
-        return <TrendingDown className="w-4 h-4 text-destructive" />;
-      default:
-        return <DollarSign className="w-4 h-4" />;
-    }
-  };
+  const closeCash = useMutation({
+    mutationFn: (amount: number) => CashAPI.close(amount),
+    onSuccess: async () => {
+      toast({ title: "Caja cerrada" });
+      await refetchCurrent();
+    },
+    onError: (e: any) => {
+      toast({
+        title: "No se pudo cerrar la caja",
+        description: e?.message ?? "Error",
+        variant: "destructive",
+      });
+    },
+  });
 
-  const getPaymentMethodIcon = (method: string) => {
-    switch (method) {
-      case "efectivo":
-        return <Banknote className="w-3 h-3" />;
-      case "tarjeta":
-        return <CreditCard className="w-3 h-3" />;
-      case "transferencia":
-        return <Wallet className="w-3 h-3" />;
-      default:
-        return <DollarSign className="w-3 h-3" />;
-    }
-  };
+  const n = (v: any) => Number(v ?? 0);
+  const fmt = (v: any) => n(v).toLocaleString("es-AR", { style: "currency", currency: "ARS" });
+
+  const openingAmount = n(current?.openingAmount);
+  const totalIncome = n(current?.totalIncome);
+  const totalExpense = n(current?.totalExpense);
+  const totalSales = n(current?.totalSales);
+  const balance = n(current?.balance);
+
+  const calcOpening = balance - totalIncome + totalExpense - totalSales;
+  const showCalcOpening = openingAmount === 0 && Math.abs(calcOpening) > 0.0001;
+
+  const sortedMovs = useMemo(() => {
+    const arr = Array.isArray(movements) ? movements : [];
+    return [...arr].sort((a: any, b: any) => {
+      const da = new Date(a.createdAt).getTime() || 0;
+      const db = new Date(b.createdAt).getTime() || 0;
+      return db - da;
+    });
+  }, [movements]);
+
+  useEffect(() => {
+    if (!isNaN(balance)) setOpenAmount(String(balance));
+  }, [balance]);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">Gestión de Caja</h1>
-          <p className="text-muted-foreground">Control diario de ingresos y gastos</p>
+        <div className="flex items-center gap-3">
+          <div>
+            <h1 className="text-3xl font-bold text-foreground">Caja</h1>
+            <p className="text-muted-foreground">Apertura, cierre y movimientos del día</p>
+          </div>
+          <StatusChip isOpen={isOpen} />
         </div>
-        <div className="flex gap-3">
-          {cashData.isOpen ? (
-            <Button variant="outline" className="bg-gradient-to-r from-destructive/10 to-destructive/20 border-destructive/30 text-destructive">
-              <Wallet className="w-4 h-4 mr-2" />
-              Cerrar Caja
+
+        <div className="flex gap-2">
+          {isOpen === true ? (
+            <Button
+              onClick={() => closeCash.mutate(balance)}
+              variant="secondary"
+              disabled={closeCash.isPending}
+            >
+              <ArrowUpFromLine className="w-4 h-4 mr-2" />
+              Cerrar caja
             </Button>
           ) : (
-            <Button className="bg-gradient-to-r from-success to-success-hover">
-              <Wallet className="w-4 h-4 mr-2" />
-              Abrir Caja
-            </Button>
+            <div className="flex items-center gap-2">
+              <Input
+                className="w-28"
+                type="number"
+                step="1"
+                value={openAmount}
+                onChange={(e) => setOpenAmount(e.target.value)}
+                placeholder="Monto"
+              />
+              <Button
+                onClick={() => openCash.mutate(Number(openAmount || 0))}
+                variant="default"
+                disabled={openCash.isPending}
+              >
+                <ArrowDownToLine className="w-4 h-4 mr-2" />
+                Abrir caja
+              </Button>
+            </div>
           )}
-          <Button variant="outline">
-            <Download className="w-4 h-4 mr-2" />
-            Generar Reporte
-          </Button>
         </div>
       </div>
 
-      {/* Cash Status */}
-      <Card className={`border-2 ${cashData.isOpen ? 'border-success/30 bg-gradient-to-br from-success/5 to-success/10' : 'border-muted/30'}`}>
-        <CardContent className="pt-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
-                cashData.isOpen ? 'bg-success/20' : 'bg-muted/20'
-              }`}>
-                <Wallet className={`w-8 h-8 ${cashData.isOpen ? 'text-success' : 'text-muted-foreground'}`} />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-foreground">
-                  Caja {cashData.isOpen ? 'Abierta' : 'Cerrada'}
-                </h2>
-                <p className="text-muted-foreground">
-                  {cashData.isOpen ? `Abierta desde ${cashData.openedAt}` : 'Caja cerrada'}
-                </p>
-              </div>
+      {isOpen === false && (
+        <div className={cn("border border-amber-300/60 bg-amber-50 text-amber-900 p-3 rounded-xl flex items-center gap-2")}>
+          <AlertCircle className="w-4 h-4" />
+          <span>La caja está <b>cerrada</b>. Abrila para poder confirmar pedidos y registrar ventas.</span>
+        </div>
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Resumen del día</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loadingCurrent ? (
+            <div className="text-sm text-muted-foreground">Cargando resumen…</div>
+          ) : current ? (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              <Kpi label="Fecha" value={current.date ?? "—"} />
+              <Kpi
+                label="Apertura"
+                value={fmt(openingAmount)}
+                hint={showCalcOpening ? `Apertura calculada: ${fmt(calcOpening)}` : undefined}
+                emphasis={showCalcOpening}
+                extraBadge={showCalcOpening ? "calculada" : undefined}
+              />
+              <Kpi label="Ingresos" value={fmt(totalIncome)} />
+              <Kpi label="Egresos" value={fmt(totalExpense)} />
+              <Kpi label="Ventas" value={fmt(totalSales)} />
+              <Kpi label="Balance" value={fmt(balance)} emphasis />
             </div>
-            <div className="text-right">
-              <p className="text-sm text-muted-foreground">Saldo Actual</p>
-              <p className="text-3xl font-bold text-foreground">€{cashData.currentBalance.toFixed(2)}</p>
+          ) : (
+            <div className="text-sm text-muted-foreground">Sin datos.</div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Movimiento manual</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-col md:flex-row gap-3">
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant={movType === "deposit" ? "default" : "outline"}
+                onClick={() => setMovType("deposit")}
+                className="gap-2"
+              >
+                <TrendingUp className="w-4 h-4" /> Ingreso
+              </Button>
+              <Button
+                type="button"
+                variant={movType === "withdrawal" ? "default" : "outline"}
+                onClick={() => setMovType("withdrawal")}
+                className="gap-2"
+              >
+                <TrendingDown className="w-4 h-4" /> Egreso
+              </Button>
             </div>
+            <Input
+              type="number"
+              inputMode="decimal"
+              placeholder="Monto"
+              className="md:w-40"
+              value={movAmount}
+              onChange={(e) => setMovAmount(e.target.value)}
+            />
+            <Input
+              type="text"
+              placeholder="Descripción"
+              className="flex-1"
+              value={movDesc}
+              onChange={(e) => setMovDesc(e.target.value)}
+            />
+            <Button
+              onClick={() => {
+                const val = Number(movAmount);
+                if (!val || val <= 0) {
+                  toast({ title: "Ingresá un monto válido", variant: "destructive" });
+                  return;
+                }
+                const kind = movType === "withdrawal" ? "expense" : "income";
+                addMovement.mutate({
+                  amount: val,
+                  type: kind,
+                  description: movDesc || (kind === "income" ? "Ingreso manual" : "Egreso manual"),
+                });
+              }}
+              className="md:w-40"
+              disabled={addMovement.isPending}
+            >
+              {movType === "deposit" ? <PiggyBank className="w-4 h-4 mr-2" /> : <History className="w-4 h-4 mr-2" />}
+              Registrar
+            </Button>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Tip: podés usar valores negativos solo para egresos. Para ingresos, el monto debe ser positivo.
           </div>
         </CardContent>
       </Card>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <Card className="bg-gradient-to-br from-card to-accent/5">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Saldo Inicial</p>
-                <p className="text-2xl font-bold text-foreground">€{cashData.openingBalance.toFixed(2)}</p>
-              </div>
-              <Wallet className="w-8 h-8 text-primary" />
-            </div>
-          </CardContent>
-        </Card>
-        
-        <Card className="bg-gradient-to-br from-success/5 to-success/10 border-success/20">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Ventas</p>
-                <p className="text-2xl font-bold text-success">€{cashData.totalSales.toFixed(2)}</p>
-              </div>
-              <TrendingUp className="w-8 h-8 text-success" />
-            </div>
-          </CardContent>
-        </Card>
-        
-        <Card className="bg-gradient-to-br from-destructive/5 to-destructive/10 border-destructive/20">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Gastos</p>
-                <p className="text-2xl font-bold text-destructive">€{cashData.totalExpenses.toFixed(2)}</p>
-              </div>
-              <TrendingDown className="w-8 h-8 text-destructive" />
-            </div>
-          </CardContent>
-        </Card>
-        
-        <Card className="bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Beneficio Neto</p>
-                <p className="text-2xl font-bold text-primary">
-                  €{(cashData.totalSales - cashData.totalExpenses).toFixed(2)}
-                </p>
-              </div>
-              <DollarSign className="w-8 h-8 text-primary" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Transactions */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <span className="flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-primary" />
-              Movimientos de Hoy
-            </span>
-            <Badge className="bg-primary/10 text-primary border-primary/20">
-              {transactions.length} transacciones
-            </Badge>
-          </CardTitle>
+          <CardTitle>Movimientos</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
-            {transactions.map((transaction) => (
-              <div key={transaction.id} className="flex items-center justify-between p-4 rounded-lg bg-accent/30 hover:bg-accent/50 transition-colors">
-                <div className="flex items-center gap-3">
-                  {getTransactionIcon(transaction.type)}
-                  <div>
-                    <p className="font-medium text-foreground">{transaction.description}</p>
-                    <p className="text-sm text-muted-foreground flex items-center gap-1">
-                      {getPaymentMethodIcon(transaction.method)}
-                      {transaction.method} • {transaction.time}
-                    </p>
+          {loadingMovs ? (
+            <div className="text-sm text-muted-foreground">Cargando movimientos…</div>
+          ) : sortedMovs.length === 0 ? (
+            <div className="text-sm text-muted-foreground">Aún no hay movimientos.</div>
+          ) : (
+            <div className="space-y-2">
+              {sortedMovs.map((m) => {
+                const isOut = m.type === "expense";
+                const sign = isOut ? "-" : "+";
+                const icon = isOut ? (
+                  <TrendingDown className="w-4 h-4" />
+                ) : m.type === "sale" ? (
+                  <CreditCard className="w-4 h-4" />
+                ) : (
+                  <TrendingUp className="w-4 h-4" />
+                );
+                const when = new Date(m.createdAt).toLocaleString();
+
+                return (
+                  <div
+                    key={m.id}
+                    className="flex items-center justify-between border rounded-xl p-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={cn(
+                          "w-8 h-8 rounded-full flex items-center justify-center",
+                          isOut ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700"
+                        )}
+                      >
+                        {icon}
+                      </div>
+                      <div>
+                        <div className="font-medium">{m.description}</div>
+                        <div className="text-xs text-muted-foreground">{when}</div>
+                      </div>
+                    </div>
+                    <div className={cn("font-semibold", isOut ? "text-red-700" : "text-emerald-700")}>
+                      {sign}
+                      {n(Math.abs(Number(m.amount))).toLocaleString("es-AR", { style: "currency", currency: "ARS" })}
+                    </div>
                   </div>
-                </div>
-                <div className="text-right">
-                  <p className={`text-lg font-bold ${
-                    transaction.amount > 0 ? 'text-success' : 'text-destructive'
-                  }`}>
-                    {transaction.amount > 0 ? '+' : ''}€{Math.abs(transaction.amount).toFixed(2)}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
   );
-};
+}
+
+function Kpi({
+  label,
+  value,
+  emphasis = false,
+  hint,
+  extraBadge,
+}: {
+  label: string;
+  value: string;
+  emphasis?: boolean;
+  hint?: string;
+  extraBadge?: string;
+}) {
+  return (
+    <div className={cn("p-3 border rounded-xl relative", emphasis ? "bg-primary/5" : "")}>
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-muted-foreground">{label}</div>
+        {extraBadge && (
+          <Badge className="text-[10px] py-0 px-1.5 bg-primary/10 text-primary border-primary/20">
+            {extraBadge}
+          </Badge>
+        )}
+      </div>
+      <div className={cn("text-lg font-semibold", emphasis ? "text-primary" : "text-foreground")}>
+        {value}
+      </div>
+      {hint && (
+        <div className="mt-1 text-[11px] text-muted-foreground">{hint}</div>
+      )}
+    </div>
+  );
+}
+
+function StatusChip({ isOpen }: { isOpen?: boolean }) {
+  if (isOpen === true) {
+    return (
+      <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">
+        • Caja abierta
+      </Badge>
+    );
+  }
+  if (isOpen === false) {
+    return (
+      <Badge className="bg-amber-100 text-amber-700 border-amber-200">
+        • Caja cerrada
+      </Badge>
+    );
+  }
+  return (
+    <Badge className="bg-slate-100 text-slate-700 border-slate-200">
+      • Estado desconocido
+    </Badge>
+  );
+}
+
+export default CashSection;
