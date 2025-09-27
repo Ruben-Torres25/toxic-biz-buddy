@@ -1,28 +1,20 @@
-import { api } from '@/lib/api';
-import { CashReport, CashMovement } from '@/types/domain';
+// src/services/cash.api.ts
+import { api } from "@/lib/api";
 
-export class CashAPI {
-  static async current(): Promise<CashReport> {
-    return api.get<CashReport>('/cash/current');
-  }
+export const CashAPI = {
+  current: async () => api.get("/cash/current"),
+  open: async (amount: number) => api.post("/cash/open", { amount }),
+  close: async (amount: number) => api.post("/cash/close", { amount }),
+  movement: async (p: { amount: number; type: string; description: string }) =>
+    api.post("/cash/movement", p),
 
-  static async open(openingAmount: number): Promise<CashReport> {
-    return api.post<CashReport>('/cash/open', { openingAmount });
-  }
-
-  static async close(closingAmount: number): Promise<CashReport> {
-    return api.post<CashReport>('/cash/close', { closingAmount });
-  }
-
-  static async movement(movement: Partial<CashMovement>): Promise<CashMovement> {
-    return api.post<CashMovement>('/cash/movement', movement);
-  }
-
-  static async report(date: string): Promise<CashReport> {
-    return api.get<CashReport>('/cash/report', { date });
-  }
-
-  static async getMovements(date?: string): Promise<CashMovement[]> {
-    return api.get<CashMovement[]>('/cash/movements', date ? { date } : undefined);
-  }
-}
+  // Abre la caja si está cerrada; si ya está abierta, no falla.
+  ensureOpen: async (amount = 0) => {
+    try {
+      await api.post("/cash/open", { amount });
+    } catch (e: any) {
+      const msg = String(e?.message || "");
+      if (!msg.includes("ya está abierta")) throw e;
+    }
+  },
+};

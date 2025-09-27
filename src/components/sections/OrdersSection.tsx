@@ -7,14 +7,16 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
-  Plus, Search, Filter, Edit, Trash2, Eye, CheckCircle, Clock, XCircle,
+  Plus, Search, Filter, Edit, Trash2, Eye, CheckCircle, Clock, XCircle, AlertCircle,
 } from "lucide-react";
 import { ViewOrderModal } from "@/components/modals/ViewOrderModal";
 import { EditOrderModal } from "@/components/modals/EditOrderModal";
 import { FilterOrdersModal } from "@/components/modals/FilterOrdersModal";
 import { toast } from "@/hooks/use-toast";
 import { OrdersAPI } from "@/services/orders.api";
+import { CashAPI } from "@/services/cash.api";
 import type { OrderDTO } from "@/types/domain";
+import { cn } from "@/lib/utils";
 
 type OrderStatus = "pending" | "confirmed" | "canceled";
 
@@ -29,7 +31,28 @@ export const OrdersSection = () => {
   const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
   const [filters, setFilters] = useState<any>({});
 
-  // ---- Data ----
+  // ---- Caja: estado actual (para mostrar banner y abrir rápido) ----
+  const { data: cashCurrent, refetch: refetchCash } = useQuery({
+    queryKey: ["cash", "current"],
+    queryFn: () => CashAPI.current(),
+    retry: 1,
+  });
+
+  const openCash = async (amount = 0) => {
+    try {
+      await CashAPI.ensureOpen(amount);
+      toast({ title: "Caja abierta", description: `Monto inicial: $${amount}` });
+      await refetchCash();
+    } catch (e: any) {
+      toast({
+        title: "No se pudo abrir la caja",
+        description: e?.message ?? "Error desconocido",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // ---- Pedidos ----
   const {
     data: orders = [],
     isLoading,
@@ -92,6 +115,7 @@ export const OrdersSection = () => {
     },
   });
 
+  // ---- Handlers ----
   const handleView = (order: OrderDTO) => {
     setSelectedOrder(order);
     setIsViewModalOpen(true);
@@ -106,11 +130,22 @@ export const OrdersSection = () => {
     deleteOrderMutation.mutate(orderId);
   };
 
-  const handleConfirm = (orderId: string) => {
-    confirmOrderMutation.mutate(orderId);
+  const handleConfirm = async (orderId: string) => {
+    try {
+      // asegura caja abierta (si ya lo está, sigue)
+      await CashAPI.ensureOpen(0);
+      confirmOrderMutation.mutate(orderId);
+    } catch (e: any) {
+      toast({
+        title: "No se pudo confirmar",
+        description: e?.message ?? "Error al abrir caja",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleCancel = (orderId: string) => {
+    // cancelar no debería requerir caja abierta
     cancelOrderMutation.mutate(orderId);
   };
 
@@ -142,7 +177,6 @@ export const OrdersSection = () => {
             ? {
                 ...o,
                 items: newItems ?? o.items,
-                // mostramos SIEMPRE el total recomputado desde ítems
                 total: recomputedTotal ?? o.total,
                 ...(updated as any).notes ? { notes: (updated as any).notes } : {},
               }
@@ -306,6 +340,20 @@ export const OrdersSection = () => {
         </Button>
       </div>
 
+      {/* Banner: caja cerrada */}
+      {cashCurrent && (cashCurrent as any).isOpen === false && (
+        <div className={cn("border border-amber-300/60 bg-amber-50 text-amber-900 p-3 rounded-xl flex items-center justify-between")}>
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4" />
+            <span>La caja de hoy está <b>cerrada</b>. Abrila para poder confirmar pedidos.</span>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => openCash(0)}>Abrir con $0</Button>
+            <Button size="sm" onClick={() => openCash(10000)}>Abrir con $10.000</Button>
+          </div>
+        </div>
+      )}
+
       {/* Filtros */}
       <Card>
         <CardContent className="pt-6">
@@ -360,12 +408,12 @@ export const OrdersSection = () => {
                       ? new Date(order.createdAt).toLocaleDateString()
                       : "";
 
-                  // cantidad total (sumatoria de cantidades), y prefijo "items"
+                  // cantidad total (sumatoria de cantidades)
                   const qtyTotal = Array.isArray(order.items)
                     ? order.items.reduce((acc, it: any) => acc + Number(it?.quantity ?? 0), 0)
                     : 0;
 
-                  // total: SIEMPRE desde los ítems para ver cambios apenas guardás
+                  // total desde ítems (para ver cambios apenas guardás)
                   const totalFromItems = Array.isArray(order.items)
                     ? order.items.reduce(
                         (acc, it: any) =>
@@ -444,7 +492,7 @@ export const OrdersSection = () => {
                             size="sm"
                             variant="outline"
                             className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
-                            onClick={() => handleDelete(order.id)}
+                            onClick={() => deleteOrderMutation.mutate(order.id)}
                             title="Eliminar pedido"
                           >
                             <Trash2 className="w-4 h-4" />

@@ -1,3 +1,6 @@
+// src/types/domain.ts
+
+// Productos
 export interface Product {
   id: string;
   sku: string;
@@ -8,6 +11,7 @@ export interface Product {
   available?: number;
 }
 
+// Clientes
 export interface Customer {
   id: string;
   name: string;
@@ -16,27 +20,24 @@ export interface Customer {
   balance: number;
 }
 
-export type OrderStatus = 'pending' | 'confirmed' | 'canceled';
-
+// Items / Pedidos
 export interface OrderItemDTO {
   productId: string;
-  productName?: string;
+  productName: string;
   unitPrice: number;
   quantity: number;
-  discount?: number;
-  lineTotal?: number;
+  discount?: number; // monto absoluto
 }
 
 export interface OrderDTO {
   id: string;
-  code?: string | null;
-  status: OrderStatus;
+  code: string | null;
+  status: "pending" | "confirmed" | "canceled";
   total: number;
-  notes?: string | null;
+  notes?: string;
+  customer?: Customer;
   items?: OrderItemDTO[];
-  customer?: Customer | string;
-  createdAt?: string | Date;
-  updatedAt?: string | Date;
+  createdAt: string | Date;
 }
 
 export interface CreateOrderDTO {
@@ -45,10 +46,12 @@ export interface CreateOrderDTO {
   notes?: string;
 }
 
-// Caja (si lo usás)
+// Caja
 export interface CashMovement {
   id: string;
-  type: 'income' | 'expense';
+  // cubrir nomenclaturas del backend: sale (venta), deposit/withdrawal (manuales)
+  // mantener income/expense por compatibilidad si alguna ruta los mapea así
+  type: "sale" | "deposit" | "withdrawal" | "income" | "expense";
   amount: number;
   description: string;
   createdAt: string | Date;
