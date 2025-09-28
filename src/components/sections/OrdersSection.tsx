@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
-  Plus, Search, Filter, Edit, Trash2, Eye, CheckCircle, Clock, XCircle, AlertCircle,
+  Plus, Search, Filter, Edit, Trash2, Eye, CheckCircle, Clock, XCircle,
 } from "lucide-react";
 import { ViewOrderModal } from "@/components/modals/ViewOrderModal";
 import { EditOrderModal } from "@/components/modals/EditOrderModal";
@@ -16,11 +16,10 @@ import { toast } from "@/hooks/use-toast";
 import { OrdersAPI } from "@/services/orders.api";
 import { CashAPI } from "@/services/cash.api";
 import type { OrderDTO } from "@/types/domain";
-import { cn } from "@/lib/utils";
 
 type OrderStatus = "pending" | "confirmed" | "canceled";
 
-export const OrdersSection = () => {
+export function OrdersSection() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -31,28 +30,15 @@ export const OrdersSection = () => {
   const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
   const [filters, setFilters] = useState<any>({});
 
-  // ---- Caja: estado actual (para mostrar banner y abrir rápido) ----
-  const { data: cashCurrent, refetch: refetchCash } = useQuery({
+  // ---- Caja (status) ----
+  const { data: cash = undefined, refetch: refetchCash } = useQuery({
     queryKey: ["cash", "current"],
-    queryFn: () => CashAPI.current(),
-    retry: 1,
+    queryFn: () => CashAPI.current(), // <--- corregido
+    staleTime: 10_000,
   });
+  const cashOpen = !!cash?.isOpen;
 
-  const openCash = async (amount = 0) => {
-    try {
-      await CashAPI.ensureOpen(amount);
-      toast({ title: "Caja abierta", description: `Monto inicial: $${amount}` });
-      await refetchCash();
-    } catch (e: any) {
-      toast({
-        title: "No se pudo abrir la caja",
-        description: e?.message ?? "Error desconocido",
-        variant: "destructive",
-      });
-    }
-  };
-
-  // ---- Pedidos ----
+  // ---- Orders ----
   const {
     data: orders = [],
     isLoading,
@@ -71,17 +57,21 @@ export const OrdersSection = () => {
 
   // ---- Mutations ----
   const confirmOrderMutation = useMutation({
-    mutationFn: (id: string) => OrdersAPI.confirm(id),
+    mutationFn: async (id: string) => {
+      if (!cashOpen) {
+        navigate("/caja");
+        throw new Error("Caja cerrada");
+      }
+      return OrdersAPI.confirm(id);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["orders"] });
+      refetchCash();
       toast({ title: "Pedido confirmado", description: "Se confirmó el pedido." });
     },
     onError: (err: any) => {
-      toast({
-        title: "Error al confirmar",
-        description: err?.message ?? "No se pudo confirmar el pedido.",
-        variant: "destructive",
-      });
+      const msg = err?.message || "No se pudo confirmar";
+      toast({ title: "No se pudo confirmar", description: msg, variant: "destructive" });
     },
   });
 
@@ -115,7 +105,6 @@ export const OrdersSection = () => {
     },
   });
 
-  // ---- Handlers ----
   const handleView = (order: OrderDTO) => {
     setSelectedOrder(order);
     setIsViewModalOpen(true);
@@ -130,26 +119,15 @@ export const OrdersSection = () => {
     deleteOrderMutation.mutate(orderId);
   };
 
-  const handleConfirm = async (orderId: string) => {
-    try {
-      // asegura caja abierta (si ya lo está, sigue)
-      await CashAPI.ensureOpen(0);
-      confirmOrderMutation.mutate(orderId);
-    } catch (e: any) {
-      toast({
-        title: "No se pudo confirmar",
-        description: e?.message ?? "Error al abrir caja",
-        variant: "destructive",
-      });
-    }
+  const handleConfirm = (orderId: string) => {
+    confirmOrderMutation.mutate(orderId);
   };
 
   const handleCancel = (orderId: string) => {
-    // cancelar no debería requerir caja abierta
     cancelOrderMutation.mutate(orderId);
   };
 
-  // ⬇️ Actualización optimista + recálculo del total en UI (siempre desde ítems)
+  // ⬇️ Actualización optimista + recálculo del total en UI
   const handleSaveOrder = async (updated: OrderDTO) => {
     try {
       await OrdersAPI.update(updated.id, updated);
@@ -256,7 +234,6 @@ export const OrdersSection = () => {
     let ds: OrderDTO[] = orders ?? [];
     if (!ds.length) return ds;
 
-    // search
     const term = searchTerm.trim().toLowerCase();
     if (term) {
       ds = ds.filter((o) => {
@@ -269,7 +246,6 @@ export const OrdersSection = () => {
       });
     }
 
-    // filters
     if (filters && Object.keys(filters).length > 0) {
       ds = ds.filter((o) => {
         const clientName =
@@ -296,7 +272,6 @@ export const OrdersSection = () => {
       });
     }
 
-    // orden final por número de PED (desc)
     const num = (oo: OrderDTO) =>
       Number(String(oo.code ?? "").replace(/\D/g, "")) || 0;
     ds = [...ds].sort((a, b) => num(b) - num(a));
@@ -304,7 +279,7 @@ export const OrdersSection = () => {
     return ds;
   }, [orders, searchTerm, filters]);
 
-  // ---- Loading / Error states ----
+  // ---- Loading / Error ----
   if (isLoading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -326,6 +301,15 @@ export const OrdersSection = () => {
 
   return (
     <div className="space-y-6">
+      {!cashOpen && (
+        <Card className="border-amber-300 bg-amber-50 text-amber-800">
+          <CardContent className="pt-6 flex items-center justify-between gap-4">
+            <span>La caja está cerrada. Abrila para poder confirmar pedidos y registrar ventas.</span>
+            <Button onClick={() => navigate("/caja")}>Ir a abrir caja</Button>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Gestión de Pedidos</h1>
@@ -339,20 +323,6 @@ export const OrdersSection = () => {
           Nuevo Pedido
         </Button>
       </div>
-
-      {/* Banner: caja cerrada */}
-      {cashCurrent && (cashCurrent as any).isOpen === false && (
-        <div className={cn("border border-amber-300/60 bg-amber-50 text-amber-900 p-3 rounded-xl flex items-center justify-between")}>
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4" />
-            <span>La caja de hoy está <b>cerrada</b>. Abrila para poder confirmar pedidos.</span>
-          </div>
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => openCash(0)}>Abrir con $0</Button>
-            <Button size="sm" onClick={() => openCash(10000)}>Abrir con $10.000</Button>
-          </div>
-        </div>
-      )}
 
       {/* Filtros */}
       <Card>
@@ -408,12 +378,10 @@ export const OrdersSection = () => {
                       ? new Date(order.createdAt).toLocaleDateString()
                       : "";
 
-                  // cantidad total (sumatoria de cantidades)
                   const qtyTotal = Array.isArray(order.items)
                     ? order.items.reduce((acc, it: any) => acc + Number(it?.quantity ?? 0), 0)
                     : 0;
 
-                  // total desde ítems (para ver cambios apenas guardás)
                   const totalFromItems = Array.isArray(order.items)
                     ? order.items.reduce(
                         (acc, it: any) =>
@@ -423,6 +391,8 @@ export const OrdersSection = () => {
                         0
                       )
                     : Number(order.total ?? 0);
+
+                  const disabledConfirm = order.status !== "pending" || !cashOpen;
 
                   return (
                     <tr
@@ -472,9 +442,10 @@ export const OrdersSection = () => {
                                 variant="outline"
                                 className="h-8 w-8 p-0 hover:bg-success/10"
                                 onClick={() => handleConfirm(order.id)}
-                                title="Confirmar pedido"
+                                title={cashOpen ? "Confirmar pedido" : "Abrir caja para confirmar"}
+                                disabled={disabledConfirm}
                               >
-                                <CheckCircle className="w-4 h-4 text-success" />
+                                <CheckCircle className={`w-4 h-4 ${cashOpen ? "text-success" : ""}`} />
                               </Button>
                               <Button
                                 size="sm"
@@ -492,7 +463,7 @@ export const OrdersSection = () => {
                             size="sm"
                             variant="outline"
                             className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
-                            onClick={() => deleteOrderMutation.mutate(order.id)}
+                            onClick={() => handleDelete(order.id)}
                             title="Eliminar pedido"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -534,4 +505,6 @@ export const OrdersSection = () => {
       />
     </div>
   );
-};
+}
+
+export default OrdersSection;

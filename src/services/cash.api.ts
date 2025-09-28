@@ -19,7 +19,6 @@ export const CashAPI = {
   close: async (amount: number) => api.post("/cash/close", { amount }),
   movement: async (p: { amount: number; type: "income" | "expense" | "sale"; description: string }) =>
     api.post("/cash/movement", p),
-
-  // opcional (ya no lo usamos, pero queda disponible)
+  // Dejado por compatibilidad; NO usar ensureOpen en ningún lado.
   status: async (): Promise<{ isOpen: boolean }> => api.get("/cash/status"),
 };
