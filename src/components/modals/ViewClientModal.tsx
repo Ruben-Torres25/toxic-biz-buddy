@@ -15,6 +15,7 @@ interface Client {
   lastOrder: string;
   registrationDate?: string;
   taxId?: string;
+  notes?: string; // ← agregado
 }
 
 interface ViewClientModalProps {
@@ -100,6 +101,16 @@ export function ViewClientModal({ open, onOpenChange, client }: ViewClientModalP
               </div>
             </div>
           </div>
+
+          {/* Notas (solo si hay) — agregado */}
+          {client.notes && client.notes.trim() !== "" && (
+            <div className="space-y-2 rounded-md border p-3 bg-accent/30">
+              <p className="text-sm font-medium text-foreground">Notas</p>
+              <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                {client.notes}
+              </p>
+            </div>
+          )}
 
           <Separator />
 

@@ -3,6 +3,9 @@ import { api } from '@/lib/api';
 import { Customer } from '@/types/domain';
 
 export class CustomersAPI {
+  static adjustBalance(id: string, arg1: { amount: number; reason: string; }): Promise<unknown> {
+    throw new Error("Method not implemented.");
+  }
   static list(): Promise<Customer[]> {
     return api.get<Customer[]>('/customers');
   }
