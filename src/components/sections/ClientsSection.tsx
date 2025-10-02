@@ -15,36 +15,26 @@ import {
   Phone,
   Mail,
   MapPin,
+  History as HistoryIcon, // 👈 NUEVO
 } from "lucide-react";
 import { NewClientModal, type NewClientPayload } from "@/components/modals/NewClientModal";
 import { ViewClientModal } from "@/components/modals/ViewClientModal";
 import { EditClientModal } from "@/components/modals/EditClientModal";
 import AdjustBalanceModal from "@/components/modals/AdjustBalanceModal";
 import ConfirmDeleteDialog from "@/components/modals/ConfirmDeleteDialog";
+import CustomerMovementsModal from "@/components/modals/CustomerMovementsModal"; // 👈 NUEVO
 import { toast } from "@/hooks/use-toast";
 import { CustomersAPI } from "@/services/customers.api";
-
-// === DTO que viene del backend ===
-type CustomerDTO = {
-  id: string;
-  name: string;
-  email?: string | null;
-  phone?: string | null;
-  phone2?: string | null;      // segundo teléfono
-  address?: string | null;
-  postalCode?: string | null;  // código postal
-  notes?: string | null;
-  balance?: number | null;
-};
+import type { Customer } from "@/types/domain";
 
 // === Tipo de UI (con extras para la tabla/modales) ===
-type Client = CustomerDTO & {
+type Client = Customer & {
   orders: number;     // placeholder UI
   lastOrder: string;  // placeholder UI
 };
 
 // Adaptador: de DTO (back) a Client (UI)
-function toClient(dto: CustomerDTO): Client {
+function toClient(dto: Customer): Client {
   return {
     ...dto,
     orders: 0,
@@ -65,18 +55,22 @@ export const ClientsSection = () => {
   const [clientToAdjust, setClientToAdjust] = useState<{ id: string; name: string; balance?: number | null } | null>(null);
   const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
 
+  // 👇 NUEVO: estado para historial
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [historyFor, setHistoryFor] = useState<{ id: string; name: string } | null>(null);
+
   const [search, setSearch] = useState("");
 
-  // ===== Listar clientes desde el backend =====
-  const listQuery = useQuery({
+  // ===== Listar clientes desde el backend (sin paginación) =====
+  const listQuery = useQuery<Customer[]>({
     queryKey: ["customers"],
-    queryFn: CustomersAPI.list, // debe devolver CustomerDTO[]
+    queryFn: CustomersAPI.list, // devuelve Customer[]
   });
 
-  const customers: Client[] = useMemo(
-    () => (listQuery.data ?? []).map(toClient),
-    [listQuery.data]
-  );
+  const customers: Client[] = useMemo(() => {
+    const arr = Array.isArray(listQuery.data) ? listQuery.data : [];
+    return arr.map(toClient);
+  }, [listQuery.data]);
 
   // ===== Mutaciones =====
   const createMut = useMutation({
@@ -84,6 +78,7 @@ export const ClientsSection = () => {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["customers"] });
       toast({ title: "Cliente creado" });
+      setIsNewClientOpen(false);
     },
     onError: (e: any) => {
       toast({ title: "Error al crear", description: e?.message ?? "Inténtalo de nuevo", variant: "destructive" });
@@ -91,11 +86,12 @@ export const ClientsSection = () => {
   });
 
   const updateMut = useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: Partial<CustomerDTO> }) =>
+    mutationFn: ({ id, payload }: { id: string; payload: Partial<Customer> }) =>
       CustomersAPI.update(id, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["customers"] });
       toast({ title: "Cliente actualizado", description: "Los cambios fueron guardados." });
+      setIsEditClientOpen(false);
     },
     onError: (e: any) => {
       toast({ title: "Error al actualizar", description: e?.message ?? "Inténtalo de nuevo", variant: "destructive" });
@@ -103,8 +99,7 @@ export const ClientsSection = () => {
   });
 
   const deleteMut = useMutation({
-    mutationFn: (id: string) =>
-      (CustomersAPI as any).delete ? CustomersAPI.delete(id) : (CustomersAPI as any).remove(id),
+    mutationFn: (id: string) => CustomersAPI.delete(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["customers"] });
       toast({ title: "Cliente eliminado" });
@@ -122,6 +117,8 @@ export const ClientsSection = () => {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["customers"] });
       toast({ title: "Saldo ajustado" });
+      setIsAdjustOpen(false);
+      setClientToAdjust(null);
     },
     onError: (e: any) => {
       toast({ title: "Error ajustando saldo", description: e?.message ?? "Inténtalo de nuevo", variant: "destructive" });
@@ -178,7 +175,7 @@ export const ClientsSection = () => {
       notes?: string;
     }
   ) => {
-    const clean: Partial<CustomerDTO> = {
+    const clean: Partial<Customer> = {
       name: payload.name?.trim() || undefined,
       phone: payload.phone?.trim() || undefined,
       phone2: payload.phone2?.trim() || undefined,
@@ -194,6 +191,12 @@ export const ClientsSection = () => {
   const handleAdjustBalance = (client: Client) => {
     setClientToAdjust({ id: client.id, name: client.name, balance: client.balance });
     setIsAdjustOpen(true);
+  };
+
+  // 👇 NUEVO: abrir historial
+  const openHistory = (client: Client) => {
+    setHistoryFor({ id: client.id, name: client.name });
+    setIsHistoryOpen(true);
   };
 
   return (
@@ -374,6 +377,16 @@ export const ClientsSection = () => {
                           >
                             <DollarSign className="w-4 h-4" />
                           </Button>
+                          {/* 👇 NUEVO botón Historial */}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 w-8 p-0"
+                            onClick={() => openHistory(client)}
+                            title="Historial"
+                          >
+                            <HistoryIcon className="w-4 h-4" />
+                          </Button>
                           <Button
                             size="sm"
                             variant="outline"
@@ -401,9 +414,7 @@ export const ClientsSection = () => {
       <NewClientModal
         open={isNewClientOpen}
         onOpenChange={setIsNewClientOpen}
-        onCreate={async (p) => {
-          await createMut.mutateAsync(p);
-        }}
+        onCreate={async (p) => { await createMut.mutateAsync(p); }}
       />
       <ViewClientModal
         open={isViewClientOpen}
@@ -420,9 +431,7 @@ export const ClientsSection = () => {
         open={isAdjustOpen}
         onOpenChange={setIsAdjustOpen}
         client={clientToAdjust}
-        onConfirm={async ({ id, amount, reason }) => {
-          await adjustMut.mutateAsync({ id, amount, reason });
-        }}
+        onConfirm={async ({ id, amount, reason }) => { await adjustMut.mutateAsync({ id, amount, reason }); }}
       />
       <ConfirmDeleteDialog
         open={isDeleteOpen}
@@ -436,6 +445,13 @@ export const ClientsSection = () => {
         cancelLabel="Cancelar"
         onConfirm={confirmDelete}
         loading={deleteMut.isPending}
+      />
+      {/* 👇 NUEVO Modal de Historial */}
+      <CustomerMovementsModal
+        open={isHistoryOpen}
+        onOpenChange={(o) => { if (!o) setHistoryFor(null); setIsHistoryOpen(o); }}
+        customerId={historyFor?.id ?? null}
+        customerName={historyFor?.name ?? null}
       />
     </div>
   );

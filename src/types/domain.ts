@@ -1,5 +1,3 @@
-// src/types/domain.ts
-
 // Productos
 export interface Product {
   id: string;
@@ -18,6 +16,22 @@ export interface Customer {
   phone?: string;
   email?: string;
   balance: number;
+
+  // extras opcionales que usa la UI
+  phone2?: string;
+  address?: string;
+  postalCode?: string;
+  notes?: string;
+  createdAt?: string | Date;
+}
+
+// Historial de movimientos
+export interface CustomerMovement {
+  id: string;
+  amount: number | string; // backend puede enviarlo string decimal
+  type: "payment" | "debt" | "adjust";
+  reason?: string | null;
+  createdAt: string | Date;
 }
 
 // Items / Pedidos
@@ -26,7 +40,7 @@ export interface OrderItemDTO {
   productName: string;
   unitPrice: number;
   quantity: number;
-  discount?: number; // monto absoluto
+  discount?: number;
 }
 
 export interface OrderDTO {
@@ -49,8 +63,6 @@ export interface CreateOrderDTO {
 // Caja
 export interface CashMovement {
   id: string;
-  // cubrir nomenclaturas del backend: sale (venta), deposit/withdrawal (manuales)
-  // mantener income/expense por compatibilidad si alguna ruta los mapea así
   type: "sale" | "deposit" | "withdrawal" | "income" | "expense";
   amount: number;
   description: string;

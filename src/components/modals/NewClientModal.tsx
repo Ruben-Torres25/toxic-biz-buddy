@@ -13,8 +13,8 @@ import { Label } from "@/components/ui/label";
 export type NewClientPayload = {
   name: string;
   email?: string;
-  phone?: string;     // solo números
-  phone2?: string;    // solo números (opcional)
+  phone?: string;      // solo números
+  phone2?: string;     // solo números (opcional)
   address?: string;
   postalCode?: string; // solo números (opcional)
   notes?: string;

@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+// si tenés el componente de shadcn:
+import { Textarea } from "@/components/ui/textarea";
 
 type ClientLite = {
   id: string;
@@ -24,7 +26,21 @@ export interface AdjustBalanceModalProps {
   onConfirm: (args: { id: string; amount: number; reason?: string }) => Promise<void> | void;
 }
 
-type ActionKind = "payment" | "debt"; // payment = monto POSITIVO (nuevo), debt = monto NEGATIVO (nuevo)
+type ActionKind = "payment" | "debt"; // payment = + , debt = -
+
+const REASON_MAX = 140;
+
+// Sanitiza el monto: solo dígitos y UN separador ('.' o ',')
+const sanitizeAmount = (s: string) => {
+  let v = s.replace(/[^\d.,]/g, "");
+  const sepIdx = v.search(/[.,]/);
+  if (sepIdx !== -1) {
+    const head = v.slice(0, sepIdx + 1);
+    const tail = v.slice(sepIdx + 1).replace(/[.,]/g, "");
+    v = head + tail;
+  }
+  return v;
+};
 
 export default function AdjustBalanceModal({
   open,
@@ -46,7 +62,7 @@ export default function AdjustBalanceModal({
     }
   }, [open]);
 
-  // El usuario ingresa SIEMPRE un monto positivo
+  // El usuario ingresa SIEMPRE un monto positivo (lo sanitizamos y normalizamos)
   const parsedAbsAmount = useMemo(() => {
     const raw = (amount || "").replace(",", ".");
     const n = Number(raw);
@@ -54,7 +70,7 @@ export default function AdjustBalanceModal({
     return Math.abs(n);
   }, [amount]);
 
-  // NUEVO MAPEO: pago = +, deuda = -
+  // Mapeo: pago = +, deuda = -
   const signedAmount = useMemo(() => {
     if (Number.isNaN(parsedAbsAmount)) return NaN;
     return action === "payment" ? +parsedAbsAmount : -parsedAbsAmount;
@@ -83,7 +99,7 @@ export default function AdjustBalanceModal({
       await onConfirm({
         id: client.id,
         amount: signedAmount, // pago + / deuda -
-        reason: reason.trim() || undefined,
+        reason: reason.trim() ? reason.trim() : undefined,
       });
       onOpenChange(false);
     } finally {
@@ -100,7 +116,11 @@ export default function AdjustBalanceModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent onKeyDown={onKeyDown} className="sm:max-w-md">
+      {/* 👇 contenedor con altura máxima y scroll interno */}
+      <DialogContent
+        onKeyDown={onKeyDown}
+        className="sm:max-w-md max-h-[85vh] overflow-y-auto"
+      >
         <DialogHeader>
           <DialogTitle>Ajustar saldo</DialogTitle>
         </DialogHeader>
@@ -150,9 +170,9 @@ export default function AdjustBalanceModal({
               <Input
                 id="amount"
                 inputMode="decimal"
-                placeholder="Ingresá un monto positivo (ej: 1500.50)"
+                placeholder="Ingresá un monto (ej: 1500.50)"
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={(e) => setAmount(sanitizeAmount(e.target.value))}
               />
               {amount && Number.isNaN(parsedAbsAmount) && (
                 <p className="text-xs text-destructive mt-1">Ingresá un número válido.</p>
@@ -161,17 +181,26 @@ export default function AdjustBalanceModal({
                 <p className="text-xs text-muted-foreground mt-1">El monto debe ser mayor que 0.</p>
               )}
               <p className="text-xs text-muted-foreground mt-1">
-                Con <strong>Agregar pago</strong> el saldo **aumenta** (monto positivo). Con <strong>Agregar deuda</strong> el saldo **disminuye** (monto negativo).
+                Con <strong>Agregar pago</strong> el saldo <em>aumenta</em> (monto positivo). Con <strong>Agregar deuda</strong> el saldo <em>disminuye</em> (monto negativo).
               </p>
             </div>
 
             <div>
-              <Label htmlFor="reason">Motivo (opcional)</Label>
-              <Input
+              <div className="flex items-center justify-between">
+                <Label htmlFor="reason">Motivo (opcional)</Label>
+                <span className="text-xs text-muted-foreground">
+                  {reason.length}/{REASON_MAX}
+                </span>
+              </div>
+
+              {/* 👇 Textarea que respeta márgenes y hace wrap */}
+              <Textarea
                 id="reason"
                 placeholder="Ej: pago en efectivo / ajuste manual"
                 value={reason}
+                maxLength={REASON_MAX}
                 onChange={(e) => setReason(e.target.value)}
+                className="min-h-[88px] resize-y break-words whitespace-pre-wrap"
               />
             </div>
           </div>
