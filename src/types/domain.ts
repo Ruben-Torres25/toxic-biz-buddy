@@ -23,6 +23,15 @@ export interface Customer {
   postalCode?: string;
   notes?: string;
   createdAt?: string | Date;
+
+  // ===== Datos fiscales (opcionales) =====
+  businessName?: string;                    // Razón social
+  cuit?: string;                            // CUIT/CUIL (con o sin guiones)
+  vatStatus?: 'RI' | 'MONO' | 'EXENTO' | 'CF'; // Condición frente al IVA
+  iibb?: string;                            // Ingresos Brutos
+  fiscalAddress?: string;                   // Domicilio fiscal
+  afipCode?: string;                        // Actividad / Código AFIP
+  taxNotes?: string;                        // Observaciones fiscales
 }
 
 // Historial de movimientos

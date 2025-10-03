@@ -33,12 +33,13 @@ export class OrdersAPI {
     return api.patch<OrderDTO>(`/orders/${id}`, orderData);
   }
 
+  // Enviamos {} para evitar body "undefined"
   static async confirm(id: string): Promise<OrderDTO> {
-    return api.patch<OrderDTO>(`/orders/${id}/confirm`);
+    return api.patch<OrderDTO>(`/orders/${id}/confirm`, {});
   }
 
   static async cancel(id: string): Promise<OrderDTO> {
-    return api.patch<OrderDTO>(`/orders/${id}/cancel`);
+    return api.patch<OrderDTO>(`/orders/${id}/cancel`, {});
   }
 
   static async delete(id: string): Promise<void> {

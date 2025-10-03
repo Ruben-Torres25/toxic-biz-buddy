@@ -33,7 +33,7 @@ export function OrdersSection() {
   // ---- Caja (status) ----
   const { data: cash = undefined, refetch: refetchCash } = useQuery({
     queryKey: ["cash", "current"],
-    queryFn: () => CashAPI.current(), // <--- corregido
+    queryFn: () => CashAPI.current(),
     staleTime: 10_000,
   });
   const cashOpen = !!cash?.isOpen;
@@ -416,6 +416,7 @@ export function OrdersSection() {
                       <td className="py-3 px-4">{getStatusBadge(order.status)}</td>
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-2">
+                          {/* Ver: siempre */}
                           <Button
                             size="sm"
                             variant="outline"
@@ -425,16 +426,21 @@ export function OrdersSection() {
                           >
                             <Eye className="w-4 h-4" />
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8 w-8 p-0"
-                            onClick={() => handleEdit(order)}
-                            title="Editar pedido"
-                          >
-                            <Edit className="w-4 h-4" />
-                          </Button>
 
+                          {/* Editar: SOLO si está pendiente */}
+                          {order.status === "pending" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 w-8 p-0"
+                              onClick={() => handleEdit(order)}
+                              title="Editar pedido"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                          )}
+
+                          {/* Confirmar/Cancelar: SOLO si está pendiente */}
                           {order.status === "pending" && (
                             <>
                               <Button
@@ -459,15 +465,18 @@ export function OrdersSection() {
                             </>
                           )}
 
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
-                            onClick={() => handleDelete(order.id)}
-                            title="Eliminar pedido"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {/* Eliminar: oculto si está confirmado */}
+                          {order.status !== "confirmed" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
+                              onClick={() => handleDelete(order.id)}
+                              title="Eliminar pedido"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>
