@@ -7,6 +7,10 @@ export interface Product {
   stock: number;
   reserved?: number;
   available?: number;
+
+  // 🔎 Campos opcionales para el buscador
+  category?: string | null;
+  barcode?: string | null;
 }
 
 // Clientes

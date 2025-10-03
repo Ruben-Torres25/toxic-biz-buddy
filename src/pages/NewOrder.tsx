@@ -1,16 +1,23 @@
-// src/pages/orders/NewOrder.tsx (o donde tengas este componente)
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Plus, Trash2, ArrowLeft, Save } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
-import { Customer, Product } from "@/types/domain";
+import type { Customer, Product, OrderItemDTO, CreateOrderDTO } from "@/types/domain";
 import { OrdersAPI } from "@/services/orders.api";
+import ProductSearchModal from "@/components/modals/ProductSearchModal.tsx";
+
 
 interface UIOrderItem {
   id: string;
@@ -37,12 +44,15 @@ const NewOrder = () => {
 
   const [orderItems, setOrderItems] = useState<UIOrderItem[]>([]);
 
-  // Form para agregar un ítem
-  const [currentProductId, setCurrentProductId] = useState("");
+  // Producto “actual” (elegido desde el modal)
+  const [currentProduct, setCurrentProduct] = useState<Product | null>(null);
   const [currentQuantity, setCurrentQuantity] = useState(1);
   const [currentDiscountPercent, setCurrentDiscountPercent] = useState(0);
 
-  // Carga inicial de clientes y productos desde el backend
+  // Modal products
+  const [isProductModalOpen, setIsProductModalOpen] = useState(false);
+
+  // Carga inicial de clientes y un listado simple de productos (por si necesitás algo básico)
   useEffect(() => {
     (async () => {
       try {
@@ -50,8 +60,13 @@ const NewOrder = () => {
           api.get<Customer[]>("/customers"),
           api.get<Product[]>("/products"),
         ]);
-        setCustomers(customersRes);
-        setProducts(productsRes);
+        setCustomers(Array.isArray(customersRes) ? customersRes : []);
+        setProducts(
+          Array.isArray(productsRes)
+            ? // si el endpoint devuelve {items:[]}, vos ya lo normalizás en ProductsAPI, acá viene crudo
+              (productsRes as any).items ?? productsRes
+            : []
+        );
       } catch (e: any) {
         toast({
           title: "Error cargando datos",
@@ -62,47 +77,50 @@ const NewOrder = () => {
     })();
   }, [toast]);
 
-  const selectedProduct = useMemo(
-    () => products.find(p => p.id === currentProductId),
-    [products, currentProductId]
+  // Para mostrar nombre/sku en el selector
+  const selectedProductName = useMemo(
+    () =>
+      currentProduct
+        ? `${currentProduct.name} (SKU ${currentProduct.sku})`
+        : "Ningún producto seleccionado",
+    [currentProduct]
   );
 
   const handleAddItem = () => {
-    if (!currentProductId) {
+    if (!currentProduct) {
       toast({
         title: "Falta producto",
-        description: "Por favor selecciona un producto",
+        description: "Por favor seleccioná un producto",
         variant: "destructive",
       });
       return;
     }
-    if (!selectedProduct) return;
 
     const newItem: UIOrderItem = {
       id: crypto.randomUUID(),
-      productId: selectedProduct.id,
-      productCode: selectedProduct.sku,
-      productName: selectedProduct.name,
+      productId: currentProduct.id,
+      productCode: currentProduct.sku,
+      productName: currentProduct.name,
       quantity: currentQuantity,
-      unitPrice: Number(selectedProduct.price ?? 0),
+      unitPrice: Number(currentProduct.price ?? 0),
       discountPercent: currentDiscountPercent,
     };
 
-    setOrderItems(prev => [...prev, newItem]);
+    setOrderItems((prev) => [...prev, newItem]);
 
-    // Reset form
-    setCurrentProductId("");
+    // Reset “form” del item
+    setCurrentProduct(null);
     setCurrentQuantity(1);
     setCurrentDiscountPercent(0);
 
     toast({
       title: "Producto agregado",
-      description: `${selectedProduct.name} fue agregado al pedido`,
+      description: `${newItem.productName} fue agregado al pedido`,
     });
   };
 
   const handleRemoveItem = (id: string) => {
-    setOrderItems(items => items.filter(i => i.id !== id));
+    setOrderItems((items) => items.filter((i) => i.id !== id));
   };
 
   // Cálculos
@@ -112,16 +130,18 @@ const NewOrder = () => {
   );
 
   const productDiscounts = useMemo(
-    () => orderItems.reduce((sum, i) => {
-      const line = i.quantity * i.unitPrice;
-      return sum + (line * (i.discountPercent / 100));
-    }, 0),
+    () =>
+      orderItems.reduce((sum, i) => {
+        const line = i.quantity * i.unitPrice;
+        return sum + line * (i.discountPercent / 100);
+      }, 0),
     [orderItems]
   );
 
   const generalDiscount = useMemo(() => {
-    // si usás condición "con-descuento" aplica 10% al neto restante
-    return saleCondition === "con-descuento" ? (subtotal - productDiscounts) * 0.1 : 0;
+    return saleCondition === "con-descuento"
+      ? (subtotal - productDiscounts) * 0.1
+      : 0;
   }, [saleCondition, subtotal, productDiscounts]);
 
   const total = useMemo(
@@ -133,7 +153,7 @@ const NewOrder = () => {
     if (!clientId) {
       toast({
         title: "Falta cliente",
-        description: "Selecciona un cliente",
+        description: "Seleccioná un cliente",
         variant: "destructive",
       });
       return;
@@ -141,34 +161,33 @@ const NewOrder = () => {
     if (orderItems.length === 0) {
       toast({
         title: "Pedido vacío",
-        description: "Agrega al menos un producto",
+        description: "Agregá al menos un producto",
         variant: "destructive",
       });
       return;
     }
 
-    // Convertir % a monto por línea (lo que espera el backend)
-    const items = orderItems.map(i => {
+    // Convertir % a monto por línea y agregar productName (requerido por CreateOrderDTO/OrderItemDTO)
+    const items: OrderItemDTO[] = orderItems.map((i) => {
       const line = i.unitPrice * i.quantity;
       const discountAmount = line * (i.discountPercent / 100);
       return {
         productId: i.productId,
+        productName: i.productName ?? "",
         unitPrice: i.unitPrice,
         quantity: i.quantity,
         discount: Number(discountAmount.toFixed(2)),
       };
     });
 
+    const payload: CreateOrderDTO = {
+      customerId: clientId,
+      items,
+      // notes: deliveryDate ? `Entrega: ${deliveryDate}` : undefined,
+    };
+
     try {
-      const payload = {
-        customerId: clientId,
-        items,
-        // opcional:
-        // notes: deliveryDate ? `Entrega: ${deliveryDate}` : undefined,
-      };
-
       await OrdersAPI.create(payload);
-
       toast({
         title: "Pedido creado",
         description: "El pedido fue registrado exitosamente.",
@@ -193,7 +212,9 @@ const NewOrder = () => {
             Volver
           </Button>
           <h1 className="text-3xl font-bold text-foreground">Nuevo Pedido</h1>
-          <p className="text-muted-foreground">Completa los datos para crear un nuevo pedido</p>
+          <p className="text-muted-foreground">
+            Completá los datos para crear un nuevo pedido
+          </p>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-3">
@@ -212,7 +233,7 @@ const NewOrder = () => {
                       <SelectValue placeholder="Seleccionar cliente" />
                     </SelectTrigger>
                     <SelectContent>
-                      {customers.map(c => (
+                      {customers.map((c) => (
                         <SelectItem key={c.id} value={c.id}>
                           {c.name}
                         </SelectItem>
@@ -229,7 +250,9 @@ const NewOrder = () => {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="sin-descuento">Sin Descuento</SelectItem>
-                      <SelectItem value="con-descuento">Con Descuento (10%)</SelectItem>
+                      <SelectItem value="con-descuento">
+                        Con Descuento (10%)
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -252,31 +275,36 @@ const NewOrder = () => {
                 <CardTitle>Agregar Producto</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                  <div className="col-span-2">
-                    <Label htmlFor="product">Producto</Label>
-                    <Select value={currentProductId} onValueChange={setCurrentProductId}>
-                      <SelectTrigger id="product">
-                        <SelectValue placeholder="Seleccionar producto" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {products.map(p => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.name} — ${p.price.toFixed(2)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+                  <div className="lg:col-span-2">
+                    <Label>Producto</Label>
+
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setIsProductModalOpen(true)}
+                      >
+                        Buscar / Filtrar productos
+                      </Button>
+                      <span className="text-sm text-muted-foreground">
+                        {selectedProductName}
+                      </span>
+                    </div>
                   </div>
 
                   <div>
                     <Label htmlFor="quantity">Cantidad</Label>
                     <Input
                       id="quantity"
+                      inputMode="numeric"
                       type="number"
-                      min="1"
+                      min={1}
                       value={currentQuantity}
-                      onChange={(e) => setCurrentQuantity(parseInt(e.target.value) || 1)}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10);
+                        setCurrentQuantity(Number.isFinite(v) && v > 0 ? v : 1);
+                      }}
                     />
                   </div>
 
@@ -284,11 +312,16 @@ const NewOrder = () => {
                     <Label htmlFor="discount">Descuento (%)</Label>
                     <Input
                       id="discount"
+                      inputMode="decimal"
                       type="number"
-                      min="0"
-                      max="100"
+                      min={0}
+                      max={100}
                       value={currentDiscountPercent}
-                      onChange={(e) => setCurrentDiscountPercent(parseFloat(e.target.value) || 0)}
+                      onChange={(e) => {
+                        const v = parseFloat(e.target.value);
+                        const clamped = Math.min(100, Math.max(0, Number.isFinite(v) ? v : 0));
+                        setCurrentDiscountPercent(clamped);
+                      }}
                     />
                   </div>
                 </div>
@@ -310,13 +343,27 @@ const NewOrder = () => {
                     <table className="w-full border-collapse">
                       <thead>
                         <tr className="border-b">
-                          <th className="text-left p-2 font-medium text-muted-foreground">Código</th>
-                          <th className="text-left p-2 font-medium text-muted-foreground">Nombre del Producto</th>
-                          <th className="text-center p-2 font-medium text-muted-foreground">Cantidad</th>
-                          <th className="text-right p-2 font-medium text-muted-foreground">Precio Unitario</th>
-                          <th className="text-right p-2 font-medium text-muted-foreground">Descuento</th>
-                          <th className="text-right p-2 font-medium text-muted-foreground">Precio Sumado</th>
-                          <th className="text-center p-2 font-medium text-muted-foreground">Acciones</th>
+                          <th className="text-left p-2 font-medium text-muted-foreground">
+                            Código
+                          </th>
+                          <th className="text-left p-2 font-medium text-muted-foreground">
+                            Nombre del Producto
+                          </th>
+                          <th className="text-center p-2 font-medium text-muted-foreground">
+                            Cantidad
+                          </th>
+                          <th className="text-right p-2 font-medium text-muted-foreground">
+                            Precio Unitario
+                          </th>
+                          <th className="text-right p-2 font-medium text-muted-foreground">
+                            Descuento
+                          </th>
+                          <th className="text-right p-2 font-medium text-muted-foreground">
+                            Precio Sumado
+                          </th>
+                          <th className="text-center p-2 font-medium text-muted-foreground">
+                            Acciones
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
@@ -330,13 +377,23 @@ const NewOrder = () => {
                               <td className="p-2 text-sm">{item.productCode ?? "-"}</td>
                               <td className="p-2 text-sm">{item.productName ?? "-"}</td>
                               <td className="p-2 text-center text-sm">{item.quantity}</td>
-                              <td className="p-2 text-right text-sm">${item.unitPrice.toFixed(2)}</td>
                               <td className="p-2 text-right text-sm">
-                                {item.discountPercent > 0 ? `${item.discountPercent}%` : '-'}
+                                ${item.unitPrice.toFixed(2)}
                               </td>
-                              <td className="p-2 text-right font-semibold text-sm">${lineTotal.toFixed(2)}</td>
+                              <td className="p-2 text-right text-sm">
+                                {item.discountPercent > 0
+                                  ? `${item.discountPercent}%`
+                                  : "-"}
+                              </td>
+                              <td className="p-2 text-right font-semibold text-sm">
+                                ${lineTotal.toFixed(2)}
+                              </td>
                               <td className="p-2 text-center">
-                                <Button variant="ghost" size="icon" onClick={() => handleRemoveItem(item.id)}>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleRemoveItem(item.id)}
+                                >
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
                               </td>
@@ -365,20 +422,30 @@ const NewOrder = () => {
                   </div>
                   {productDiscounts > 0 && (
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Descuentos de productos:</span>
-                      <span className="text-destructive">-${productDiscounts.toFixed(2)}</span>
+                      <span className="text-muted-foreground">
+                        Descuentos de productos:
+                      </span>
+                      <span className="text-destructive">
+                        -${productDiscounts.toFixed(2)}
+                      </span>
                     </div>
                   )}
                   {generalDiscount > 0 && (
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Descuento general (10%):</span>
-                      <span className="text-destructive">-${generalDiscount.toFixed(2)}</span>
+                      <span className="text-muted-foreground">
+                        Descuento general (10%):
+                      </span>
+                      <span className="text-destructive">
+                        -${generalDiscount.toFixed(2)}
+                      </span>
                     </div>
                   )}
                   <div className="border-t pt-2">
                     <div className="flex justify-between">
                       <span className="font-semibold">Total:</span>
-                      <span className="font-semibold text-xl">${total.toFixed(2)}</span>
+                      <span className="font-semibold text-xl">
+                        ${total.toFixed(2)}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -388,7 +455,11 @@ const NewOrder = () => {
                     <Save className="w-4 h-4 mr-2" />
                     Crear Pedido
                   </Button>
-                  <Button variant="outline" className="w-full" onClick={() => navigate("/")}>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => navigate("/")}
+                  >
                     Cancelar
                   </Button>
                 </div>
@@ -397,6 +468,16 @@ const NewOrder = () => {
           </div>
         </div>
       </div>
+
+      {/* MODAL: búsqueda avanzada de productos */}
+      <ProductSearchModal
+        open={isProductModalOpen}
+        onOpenChange={setIsProductModalOpen}
+        onPick={(p) => {
+          setCurrentProduct(p);
+          setIsProductModalOpen(false);
+        }}
+      />
     </div>
   );
 };
