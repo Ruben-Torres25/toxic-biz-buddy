@@ -1,278 +1,275 @@
-// src/components/modals/EditOrderModal.tsx
 import { useEffect, useMemo, useState } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Trash2, Save } from "lucide-react";
-import { OrderDTO as Order, OrderItemDTO } from "@/types/domain";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Plus, Trash2, Save, X } from "lucide-react";
+import type { OrderDTO, OrderItemDTO, Product } from "@/types/domain";
+import ProductSearchModal from "@/components/modals/ProductSearchModal";
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  order: Order | null;
-  onSave: (updated: Partial<Order>) => Promise<void> | void;
+  order?: OrderDTO;
+  onSave: (updated: OrderDTO) => Promise<void> | void;
 };
 
 type UIItem = {
-  id?: string;
+  id: string;
   productId: string;
-  productName?: string;
-  unitPrice: number;     // read-only
+  productName: string;
+  unitPrice: number;
   quantity: number;
-  discountPct: number;   // UI en porcentaje (0-100)
-  discountAmount: number; // derivado para mostrar el $ (unitPrice*qty*%/100)
-  lineTotal: number;     // derivado
+  discountPercent: number;
 };
 
-const money = (n: unknown) => `$${Number(n ?? 0).toFixed(2)}`;
-
-export function EditOrderModal({ open, onOpenChange, order, onSave }: Props) {
+export default function EditOrderModal({ open, onOpenChange, order, onSave }: Props) {
   const [items, setItems] = useState<UIItem[]>([]);
   const [notes, setNotes] = useState<string>("");
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  const amountToPercent = (amount: number, unitPrice: number, qty: number) => {
+    const base = Number(unitPrice) * Number(qty);
+    if (base <= 0) return 0;
+    const pct = (Number(amount || 0) / base) * 100;
+    return Math.min(100, Math.max(0, Number.isFinite(pct) ? Math.round(pct * 100) / 100 : 0));
+  };
+
+  const percentToAmount = (percent: number, unitPrice: number, qty: number) => {
+    const base = Number(unitPrice) * Number(qty);
+    const pct = Math.min(100, Math.max(0, Number(percent || 0)));
+    return Math.round((base * pct) / 100 * 100) / 100;
+  };
 
   useEffect(() => {
-    if (!order) {
-      setItems([]);
-      setNotes("");
-      return;
+    if (open && order) {
+      const mapped: UIItem[] = (order.items ?? []).map((it, idx) => ({
+        id: `${idx}-${it.productId}`,
+        productId: it.productId,
+        productName: it.productName,
+        unitPrice: Number(it.unitPrice ?? 0),
+        quantity: Number(it.quantity ?? 1),
+        discountPercent: amountToPercent(
+          Number(it.discount ?? 0),
+          Number(it.unitPrice ?? 0),
+          Number(it.quantity ?? 1),
+        ),
+      }));
+      setItems(mapped);
+      setNotes(order.notes ?? "");
     }
+  }, [open, order]);
 
-    const normalized: UIItem[] = (order.items ?? []).map((it: any) => {
-      const unitPrice = Number(it?.unitPrice ?? 0);
-      const quantity = Number(it?.quantity ?? 0);
-      const discountAmount = Number(it?.discount ?? 0);
-      const base = unitPrice * quantity;
-      // convertir $ a % seguro (0..100)
-      const discountPct = base > 0 ? Math.min(100, Math.max(0, (discountAmount / base) * 100)) : 0;
-      const lineTotal = base - discountAmount;
+  const total = useMemo(() => {
+    return items.reduce((acc, it) => {
+      const discAmount = percentToAmount(it.discountPercent, it.unitPrice, it.quantity);
+      const line = it.unitPrice * it.quantity - discAmount;
+      return acc + line;
+    }, 0);
+  }, [items]);
 
-      return {
-        id: it?.id,
-        productId: String(it?.productId ?? ""),
-        productName: it?.productName ?? "",
-        unitPrice,
-        quantity,
-        discountPct: Number(discountPct.toFixed(2)),
-        discountAmount,
-        lineTotal,
-      };
-    });
-
-    setItems(normalized);
-    setNotes(String((order as any)?.notes ?? ""));
-  }, [order]);
-
-  const subtotal = useMemo(
-    () => items.reduce((acc, it) => acc + it.unitPrice * it.quantity, 0),
-    [items]
-  );
-  const discountTotal = useMemo(
-    () => items.reduce((acc, it) => acc + it.discountAmount, 0),
-    [items]
-  );
-  const total = useMemo(() => subtotal - discountTotal, [subtotal, discountTotal]);
-
-  const recalc = (raw: Omit<UIItem, "discountAmount" | "lineTotal">): UIItem => {
-    const base = raw.unitPrice * raw.quantity;
-    const discountAmount = base * (Math.min(100, Math.max(0, raw.discountPct)) / 100);
-    const lineTotal = base - discountAmount;
-    return {
-      ...raw,
-      discountAmount,
-      lineTotal,
-    };
-    };
-
-  const updateItem = (idx: number, patch: Partial<UIItem>) => {
-    setItems((prev) => {
-      const clone = [...prev];
-      const cur = clone[idx];
-      const next = recalc({ ...cur, ...patch });
-      clone[idx] = next;
-      return clone;
-    });
+  const handleRemove = (rowId: string) => {
+    setItems((prev) => prev.filter((r) => r.id !== rowId));
   };
 
-  const removeItem = (idx: number) => {
-    setItems((prev) => prev.filter((_, i) => i !== idx));
+  const handleAddFromPicker = (payload: { product: Product; quantity: number; discountPercent: number }) => {
+    const { product: p, quantity, discountPercent } = payload;
+    const newRow: UIItem = {
+      id: crypto.randomUUID(),
+      productId: p.id,
+      productName: p.name,
+      unitPrice: Number(p.price ?? 0),
+      quantity: Math.max(1, quantity || 1),
+      discountPercent: Math.min(100, Math.max(0, discountPercent || 0)),
+    };
+    setItems((prev) => [...prev, newRow]);
+    setSearchOpen(false);
   };
 
-  const handleSave = async () => {
+  const setQty = (rowId: string, v: number) => {
+    setItems((prev) =>
+      prev.map((r) => (r.id === rowId ? { ...r, quantity: Math.max(1, Math.floor(v || 1)) } : r)),
+    );
+  };
+
+  const setPrice = (rowId: string, v: number) => {
+    setItems((prev) =>
+      prev.map((r) => (r.id === rowId ? { ...r, unitPrice: Math.max(0, Number.isFinite(v) ? v : 0) } : r)),
+    );
+  };
+
+  const setDiscPct = (rowId: string, v: number) => {
+    setItems((prev) =>
+      prev.map((r) =>
+        r.id === rowId
+          ? { ...r, discountPercent: Math.min(100, Math.max(0, Number.isFinite(v) ? v : 0)) }
+          : r,
+      ),
+    );
+  };
+
+  const save = async () => {
     if (!order) return;
-
-    // Convertimos % → monto ($) para el backend
-    const safeItems: OrderItemDTO[] = items.map((i) => ({
-      productId: i.productId,
-      productName: i.productName,
-      unitPrice: Number(i.unitPrice),
-      quantity: Number(i.quantity),
-      discount: Number(i.discountAmount), // ← el back espera monto
+    const dtoItems: OrderItemDTO[] = items.map((it) => ({
+      productId: it.productId,
+      productName: it.productName,
+      unitPrice: it.unitPrice,
+      quantity: it.quantity,
+      discount: percentToAmount(it.discountPercent, it.unitPrice, it.quantity),
     }));
 
-    await onSave({
-      id: order.id,
-      items: safeItems,
+    const updated: OrderDTO = {
+      ...order,
+      items: dtoItems,
       notes,
-    });
+      total: dtoItems.reduce(
+        (acc, it) => acc + it.unitPrice * it.quantity - Number(it.discount ?? 0),
+        0,
+      ),
+    };
 
-    onOpenChange(false);
+    await onSave(updated);
   };
 
+  if (!order) return null;
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>Editar pedido {order?.code ?? order?.id ?? ""}</DialogTitle>
-          <DialogDescription>
-            Modificá <strong>cantidades</strong> y <strong>descuento (%)</strong>. El precio se gestiona en <strong>Productos</strong>.
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="w-[96vw] sm:max-w-4xl md:max-w-5xl max-h-[90vh] overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>Editar pedido {order.code ?? "—"}</DialogTitle>
+          </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr className="border-b">
-                  <th className="text-left p-2 text-sm text-muted-foreground">Producto</th>
-                  <th className="text-right p-2 text-sm text-muted-foreground">Precio</th>
-                  <th className="text-center p-2 text-sm text-muted-foreground">Cantidad</th>
-                  <th className="text-right p-2 text-sm text-muted-foreground">Desc. (%)</th>
-                  <th className="text-right p-2 text-sm text-muted-foreground">Desc. ($)</th>
-                  <th className="text-right p-2 text-sm text-muted-foreground">Total línea</th>
-                  <th className="text-center p-2 text-sm text-muted-foreground">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((it, idx) => (
-                  <tr key={it.id ?? `${it.productId}-${idx}`} className="border-b">
-                    <td className="p-2 text-sm">{it.productName || it.productId || "-"}</td>
+          <div className="space-y-3">
+            <Label>Notas</Label>
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notas del pedido…" />
+          </div>
 
-                    {/* PRECIO SOLO LECTURA */}
-                    <td className="p-2 text-right text-sm">
-                      <Input
-                        type="number"
-                        inputMode="decimal"
-                        className="text-right opacity-70 cursor-not-allowed"
-                        value={String(it.unitPrice)}
-                        readOnly
-                        disabled
-                        title="El precio se modifica desde la sección Productos"
-                      />
-                    </td>
+          <div className="border rounded-md">
+            <div className="flex items-center justify-between p-3">
+              <span className="text-sm text-muted-foreground">Items ({items.length})</span>
+              <Button size="sm" onClick={() => setSearchOpen(true)}>
+                <Plus className="w-4 h-4 mr-1" />
+                Agregar producto
+              </Button>
+            </div>
 
-                    {/* CANTIDAD */}
-                    <td className="p-2 text-center text-sm">
-                      <Input
-                        type="number"
-                        inputMode="numeric"
-                        className="text-center"
-                        min={0}
-                        value={String(it.quantity)}
-                        onChange={(e) =>
-                          updateItem(idx, { quantity: Number(e.target.value || 0) })
-                        }
-                      />
-                    </td>
-
-                    {/* DESCUENTO % */}
-                    <td className="p-2 text-right text-sm">
-                      <Input
-                        type="number"
-                        inputMode="decimal"
-                        className="text-right"
-                        min={0}
-                        max={100}
-                        step="0.01"
-                        value={String(it.discountPct)}
-                        onChange={(e) =>
-                          updateItem(idx, { discountPct: Number(e.target.value || 0) })
-                        }
-                      />
-                    </td>
-
-                    {/* DESCUENTO $ (solo lectura, derivado) */}
-                    <td className="p-2 text-right text-sm">
-                      {money(it.discountAmount)}
-                    </td>
-
-                    {/* TOTAL LÍNEA */}
-                    <td className="p-2 text-right font-semibold text-sm">
-                      {money(it.lineTotal)}
-                    </td>
-
-                    <td className="p-2 text-center">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => removeItem(idx)}
-                        title="Quitar ítem"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </td>
+            <ScrollArea className="max-h-[48vh] md:max-h-[60vh]">
+              <table className="w-full text-sm table-fixed">
+                <thead className="sticky top-0 bg-muted/50 backdrop-blur z-10">
+                  <tr className="border-b">
+                    <th className="text-left px-3 py-2 align-middle">Producto</th>
+                    <th className="text-center px-3 py-2 align-middle w-[14%]">Cant.</th>
+                    <th className="text-right px-3 py-2 align-middle w-[16%]">Precio</th>
+                    <th className="text-right px-3 py-2 align-middle w-[14%]">Desc. %</th>
+                    <th className="text-right px-3 py-2 align-middle w-[16%]">Total</th>
+                    <th className="text-center px-3 py-2 align-middle w-[10%]">Acción</th>
                   </tr>
-                ))}
-                {items.length === 0 && (
-                  <tr>
-                    <td className="p-4 text-center text-sm text-muted-foreground" colSpan={7}>
-                      Este pedido no tiene ítems.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {items.map((r) => {
+                    const discAmount = percentToAmount(r.discountPercent, r.unitPrice, r.quantity);
+                    const line = r.unitPrice * r.quantity - discAmount;
+                    return (
+                      <tr key={r.id} className="border-b">
+                        <td className="px-3 py-2 align-middle">{r.productName}</td>
+
+                        <td className="px-3 py-2 align-middle">
+                          <div className="flex items-center justify-center">
+                            <Input
+                              className="w-20 text-center"
+                              type="number"
+                              min={1}
+                              value={r.quantity}
+                              onChange={(e) => setQty(r.id, parseInt(e.target.value || "1", 10))}
+                            />
+                          </div>
+                        </td>
+
+                        <td className="px-3 py-2 align-middle">
+                          <div className="flex items-center justify-end">
+                            <Input
+                              className="w-28 text-right"
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={r.unitPrice}
+                              onChange={(e) => setPrice(r.id, parseFloat(e.target.value || "0"))}
+                            />
+                          </div>
+                        </td>
+
+                        <td className="px-3 py-2 align-middle">
+                          <div className="flex items-center justify-end">
+                            <Input
+                              className="w-24 text-right"
+                              type="number"
+                              min={0}
+                              max={100}
+                              step="0.5"
+                              value={r.discountPercent}
+                              onChange={(e) => setDiscPct(r.id, parseFloat(e.target.value || "0"))}
+                            />
+                          </div>
+                        </td>
+
+                        <td className="px-3 py-2 align-middle text-right font-semibold">
+                          ${line.toFixed(2)}
+                        </td>
+
+                        <td className="px-3 py-2 align-middle text-center">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => handleRemove(r.id)}
+                            title="Quitar"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {items.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                        Todavía no hay productos en este pedido.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </ScrollArea>
+
+            <div className="flex items-center justify-between p-3 border-t">
+              <span className="text-sm text-muted-foreground">Total</span>
+              <span className="text-lg font-semibold">${total.toFixed(2)}</span>
+            </div>
           </div>
 
-          {/* Notas */}
-          <div className="space-y-1">
-            <Label htmlFor="notes">Notas</Label>
-            <Input
-              id="notes"
-              placeholder="Notas del pedido (opcional)"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              <X className="w-4 h-4 mr-1" />
+              Cancelar
+            </Button>
+            <Button onClick={save}>
+              <Save className="w-4 h-4 mr-1" />
+              Guardar cambios
+            </Button>
           </div>
+        </DialogContent>
+      </Dialog>
 
-          {/* Resumen */}
-          <div className="ml-auto max-w-sm space-y-2">
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Subtotal</span>
-              <span>{money(subtotal)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Descuentos</span>
-              <span className="text-destructive">-{money(discountTotal)}</span>
-            </div>
-            <div className="border-t pt-2">
-              <div className="flex justify-between">
-                <span className="font-semibold">Total</span>
-                <span className="font-semibold text-xl">{money(total)}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancelar
-          </Button>
-          <Button onClick={handleSave}>
-            <Save className="w-4 h-4 mr-2" />
-            Guardar cambios
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      <ProductSearchModal
+        open={searchOpen}
+        onOpenChange={setSearchOpen}
+        onPick={handleAddFromPicker}
+      />
+    </>
   );
 }
 
-export default EditOrderModal;
+export { EditOrderModal };
