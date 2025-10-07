@@ -14,10 +14,14 @@ import { CheckCircle, Clock, XCircle, Copy, RotateCcw } from "lucide-react";
 import CreateCreditNoteModal from "@/components/modals/CreateCreditNoteModal";
 import { toast } from "@/hooks/use-toast";
 
+// ⬇️ NUEVO: importar OrdersAPI para refrescar el pedido desde el backend
+import { OrdersAPI } from "@/services/orders.api";
+
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   order: Order | null;
+  onSoftRefresh?: (orderId: string) => Promise<void> | void; // inyectado por el padre (opcional)
 };
 
 const IVA_RATE = 0.21;
@@ -66,21 +70,79 @@ const StatusBadge: React.FC<{ status?: string }> = ({ status }) => {
           Cancelado
         </Badge>
       );
+    case "partially_returned":
+      return <Badge className="bg-blue-100 text-blue-800 border-blue-200">Devolución parcial</Badge>;
+    case "returned":
+      return <Badge className="bg-muted text-foreground border-muted-foreground/20">Devuelto</Badge>;
     default:
       return <Badge variant="outline">{status ?? "—"}</Badge>;
   }
 };
 
-export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order }) => {
-  const [creditOpen, setCreditOpen] = React.useState(false);
+/** Cuánto queda por devolver en total */
+const remainingReturnableQty = (order?: Order | null) => {
+  const items = Array.isArray((order as any)?.items) ? (order as any).items : [];
+  return items.reduce((acc: number, it: any) => {
+    const sold = Number(it?.quantity ?? 0);
+    const ret = Number(it?.returnedQty ?? 0);
+    return acc + Math.max(0, sold - ret);
+  }, 0);
+};
 
+export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order, onSoftRefresh }) => {
+  const [creditOpen, setCreditOpen] = React.useState(false);
+  const didInitialRefresh = React.useRef(false);
+
+  // ⬇️ NUEVO: estado interno que SIEMPRE se usa para renderizar
+  const [currentOrder, setCurrentOrder] = React.useState<Order | null>(order ?? null);
+
+  // Mantener currentOrder sincronizado cuando cambie la prop 'order'
+  React.useEffect(() => {
+    setCurrentOrder(order ?? null);
+  }, [order]);
+
+  const orderId = currentOrder?.id ?? order?.id ?? null;
+
+  // ⬇️ NUEVO: refresco robusto desde backend + callback del padre (si existe)
+  const softRefresh = React.useCallback(
+    async (id?: string | null) => {
+      const targetId = id ?? orderId;
+      if (!targetId) return;
+      try {
+        // 1) pedir al backend el pedido actualizado
+        const fresh = await OrdersAPI.getById(targetId);
+        if (fresh) setCurrentOrder(fresh);
+      } catch (e) {
+        // si falla, no rompemos el flujo
+      }
+      try {
+        // 2) avisar al padre (por si tiene su propia cache/lista)
+        await onSoftRefresh?.(targetId);
+      } catch {}
+    },
+    [orderId, onSoftRefresh]
+  );
+
+  // Refrescar automáticamente al abrir (una vez) si no está abierto el modal de NC
+  React.useEffect(() => {
+    if (!open) {
+      didInitialRefresh.current = false;
+      return;
+    }
+    if (open && !creditOpen && !didInitialRefresh.current) {
+      didInitialRefresh.current = true;
+      softRefresh(orderId);
+    }
+  }, [open, creditOpen, softRefresh, orderId]);
+
+  // Derivados para render
   const customer =
-    (order?.customer && typeof order.customer === "object" && order.customer) || null;
+    (currentOrder?.customer && typeof currentOrder.customer === "object" && currentOrder.customer) || null;
 
   const created =
-    (order?.createdAt && formatDateTimeDMY(order.createdAt as any)) || "—";
+    (currentOrder?.createdAt && formatDateTimeDMY(currentOrder.createdAt as any)) || "—";
 
-  const items = Array.isArray((order as any)?.items) ? (order as any).items : [];
+  const items = Array.isArray((currentOrder as any)?.items) ? (currentOrder as any).items : [];
 
   const rows = items.map((it: any) => {
     const unitPrice = Number(it.unitPrice ?? 0);
@@ -94,16 +156,27 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order }) =
     return { it, unitPrice, qty, base, discount, discFrac, net, iva, gross };
   });
 
+  // Totales calculados localmente (fallback)
   const brutoSinIVA = r2(rows.reduce((a, x) => a + x.base, 0));
   const descuentos = r2(rows.reduce((a, x) => a + x.discount, 0));
   const subtotalSinIVA = r2(rows.reduce((a, x) => a + x.net, 0));
   const ivaTotal = r2(rows.reduce((a, x) => a + x.iva, 0));
   const totalConIVA = r2(rows.reduce((a, x) => a + x.gross, 0));
 
+  // ⬇️ NUEVO: si el backend ya devuelve el total neteado por NC, lo priorizamos
+  const displayedTotal = (currentOrder as any)?.total ?? totalConIVA;
+
+  const canOpenCredit =
+    !!currentOrder &&
+    currentOrder.status !== "canceled" &&
+    currentOrder.status !== "returned" &&
+    (currentOrder.status === "confirmed" || currentOrder.status === "partially_returned") &&
+    remainingReturnableQty(currentOrder) > 0;
+
   const copySummary = async () => {
     try {
       const lines = [
-        `Pedido: ${order?.code ?? order?.id ?? "—"}`,
+        `Pedido: ${currentOrder?.code ?? currentOrder?.id ?? "—"}`,
         `Fecha: ${created}`,
         customer?.name ? `Cliente: ${customer.name}` : null,
         customer?.email ? `Email: ${customer.email}` : null,
@@ -113,7 +186,7 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order }) =
         `Descuentos: - ${fmtMoney(descuentos)}`,
         `Subtotal (s/IVA): ${fmtMoney(subtotalSinIVA)}`,
         `IVA (21%): ${fmtMoney(ivaTotal)}`,
-        `Total (c/IVA): ${fmtMoney(totalConIVA)}`,
+        `Total (c/IVA): ${fmtMoney(displayedTotal)}`,
       ].filter(Boolean);
       await navigator.clipboard?.writeText(lines.join("\n"));
       toast({ title: "Resumen copiado" });
@@ -122,23 +195,27 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order }) =
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* Fix A11y + tamaño fluido que no excede la pantalla */}
       <DialogContent
         aria-describedby={undefined}
         className="w-[98vw] sm:max-w-5xl lg:max-w-6xl max-h-[92vh] p-0"
       >
-        {/* Header fijo */}
+        {/* Header */}
         <div className="border-b px-4 sm:px-6 py-4">
           <DialogHeader className="p-0">
             <DialogTitle className="tracking-tight">
-              Pedido {order?.code ?? order?.id ?? "—"}
+              Pedido {currentOrder?.code ?? currentOrder?.id ?? "—"}
             </DialogTitle>
             <DialogDescription className="sr-only">
               Resumen del pedido con items, impuestos y totales.
             </DialogDescription>
             <div className="mt-2 flex items-center justify-end gap-2">
-              {order?.status === "confirmed" && rows.length > 0 && (
-                <Button variant="outline" size="sm" onClick={() => setCreditOpen(true)} title="Generar Nota de Crédito">
+              {canOpenCredit && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCreditOpen(true)}
+                  title="Generar Nota de Crédito"
+                >
                   <RotateCcw className="w-4 h-4 mr-2" />
                   Devolver / NC
                 </Button>
@@ -157,7 +234,7 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order }) =
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground">Estado</div>
-              <div className="mt-1"><StatusBadge status={order?.status} /></div>
+              <div className="mt-1"><StatusBadge status={currentOrder?.status} /></div>
             </div>
 
             <div className="rounded-lg border p-3">
@@ -180,7 +257,7 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order }) =
 
             <div className="rounded-lg border p-3 bg-muted/40">
               <div className="text-xs text-muted-foreground">Total (c/IVA)</div>
-              <div className="mt-1 font-semibold text-foreground tabular-nums">{fmtMoney(totalConIVA)}</div>
+              <div className="mt-1 font-semibold text-foreground tabular-nums">{fmtMoney(displayedTotal)}</div>
             </div>
           </div>
 
@@ -257,22 +334,22 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order }) =
                   </div>
                   <div className="flex justify-between pt-2 border-t mt-2">
                     <span className="font-semibold">Total (c/IVA)</span>
-                    <span className="font-semibold tabular-nums">{fmtMoney(totalConIVA)}</span>
+                    <span className="font-semibold tabular-nums">{fmtMoney(displayedTotal)}</span>
                   </div>
                 </div>
               </div>
             </div>
           </div>
 
-          {(order as any)?.notes && (
+          {(currentOrder as any)?.notes && (
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground mb-1">Notas</div>
-              <div className="whitespace-pre-wrap text-sm">{(order as any).notes}</div>
+              <div className="whitespace-pre-wrap text-sm">{(currentOrder as any).notes}</div>
             </div>
           )}
         </div>
 
-        {/* Footer fijo */}
+        {/* Footer */}
         <div className="border-t px-4 sm:px-6 py-3 flex justify-end">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cerrar
@@ -281,13 +358,23 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order }) =
       </DialogContent>
 
       {/* Modal de Nota de Crédito */}
-      {order && (
+      {currentOrder && (
         <CreateCreditNoteModal
           open={creditOpen}
-          onOpenChange={setCreditOpen}
-          order={order}
-          onCreated={(id) => {
+          onOpenChange={(o) => {
+            setCreditOpen(o);
+            // Al cerrar el modal de NC, refrescamos el pedido
+            if (!o && currentOrder?.id) softRefresh(currentOrder.id);
+          }}
+          order={currentOrder}
+          onCreated={async (id) => {
             toast({ title: "Nota de crédito generada", description: `ID: ${id}` });
+            // Refresco inmediato tras crear
+            if (currentOrder?.id) await softRefresh(currentOrder.id);
+            // De seguridad por si hay leve latencia de DB
+            setTimeout(() => {
+              if (currentOrder?.id) softRefresh(currentOrder.id);
+            }, 1200);
           }}
         />
       )}

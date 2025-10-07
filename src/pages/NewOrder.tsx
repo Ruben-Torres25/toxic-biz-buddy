@@ -11,13 +11,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Trash2, ArrowLeft, Save } from "lucide-react";
+import { Trash2, ArrowLeft, Save, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
 import type { Customer, Product, OrderItemDTO, CreateOrderDTO } from "@/types/domain";
 import { OrdersAPI } from "@/services/orders.api";
-import ProductSearchModal from "@/components/modals/ProductSearchModal.tsx";
-
+import ProductSearchModal from "@/components/modals/ProductSearchModal";
 
 interface UIOrderItem {
   id: string;
@@ -35,7 +34,6 @@ const NewOrder = () => {
 
   // Datos remotos
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
 
   // Estado del form
   const [clientId, setClientId] = useState("");
@@ -44,79 +42,157 @@ const NewOrder = () => {
 
   const [orderItems, setOrderItems] = useState<UIOrderItem[]>([]);
 
-  // Producto “actual” (elegido desde el modal)
-  const [currentProduct, setCurrentProduct] = useState<Product | null>(null);
-  const [currentQuantity, setCurrentQuantity] = useState(1);
-  const [currentDiscountPercent, setCurrentDiscountPercent] = useState(0);
-
   // Modal products
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
 
-  // Carga inicial de clientes y un listado simple de productos (por si necesitás algo básico)
+  // ====== Modo avanzado (SKU directo) ======
+  const [advSku, setAdvSku] = useState("");
+  const [advQty, setAdvQty] = useState(1);
+  const [advDiscPct, setAdvDiscPct] = useState(0);
+  const [advLoading, setAdvLoading] = useState(false);
+
+  // Carga inicial de clientes
   useEffect(() => {
     (async () => {
       try {
-        const [customersRes, productsRes] = await Promise.all([
-          api.get<Customer[]>("/customers"),
-          api.get<Product[]>("/products"),
-        ]);
+        const customersRes = await api.get<Customer[]>("/customers");
         setCustomers(Array.isArray(customersRes) ? customersRes : []);
-        setProducts(
-          Array.isArray(productsRes)
-            ? // si el endpoint devuelve {items:[]}, vos ya lo normalizás en ProductsAPI, acá viene crudo
-              (productsRes as any).items ?? productsRes
-            : []
-        );
       } catch (e: any) {
         toast({
           title: "Error cargando datos",
-          description: e?.message ?? "No se pudieron cargar clientes/productos",
+          description: e?.message ?? "No se pudieron cargar clientes",
           variant: "destructive",
         });
       }
     })();
   }, [toast]);
 
-  // Para mostrar nombre/sku en el selector
-  const selectedProductName = useMemo(
-    () =>
-      currentProduct
-        ? `${currentProduct.name} (SKU ${currentProduct.sku})`
-        : "Ningún producto seleccionado",
-    [currentProduct]
-  );
-
-  const handleAddItem = () => {
-    if (!currentProduct) {
-      toast({
-        title: "Falta producto",
-        description: "Por favor seleccioná un producto",
-        variant: "destructive",
-      });
-      return;
+  // Cantidades ya elegidas (para el modal)
+  const inOrderMap = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const it of orderItems) {
+      m[it.productId] = (m[it.productId] ?? 0) + it.quantity;
     }
+    return m;
+  }, [orderItems]);
 
-    const newItem: UIOrderItem = {
-      id: crypto.randomUUID(),
-      productId: currentProduct.id,
-      productCode: currentProduct.sku,
-      productName: currentProduct.name,
-      quantity: currentQuantity,
-      unitPrice: Number(currentProduct.price ?? 0),
-      discountPercent: currentDiscountPercent,
-    };
+  // Helpers
+  const mergeOrPushItem = (payload: {
+    product: Product;
+    quantity: number;
+    discountPercent: number;
+  }) => {
+    const { product, quantity, discountPercent } = payload;
 
-    setOrderItems((prev) => [...prev, newItem]);
-
-    // Reset “form” del item
-    setCurrentProduct(null);
-    setCurrentQuantity(1);
-    setCurrentDiscountPercent(0);
+    setOrderItems((prev) => {
+      // Apilar si mismo producto y mismo %descuento
+      const idx = prev.findIndex(
+        (r) => r.productId === product.id && r.discountPercent === discountPercent
+      );
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = {
+          ...next[idx],
+          quantity: next[idx].quantity + quantity,
+        };
+        return next;
+      }
+      return [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          productId: product.id,
+          productCode: product.sku,
+          productName: product.name,
+          quantity,
+          unitPrice: Number(product.price ?? 0),
+          discountPercent,
+        },
+      ];
+    });
 
     toast({
       title: "Producto agregado",
-      description: `${newItem.productName} fue agregado al pedido`,
+      description: `${product.name} x${quantity}`,
     });
+  };
+
+  // Agregar desde modal
+  const handlePickFromModal = (p: { product: Product; quantity: number; discountPercent: number }) => {
+    mergeOrPushItem(p);
+    // no cierres el modal si querés seguir agregando; si preferís cerrarlo, descomentá:
+    // setIsProductModalOpen(false);
+  };
+
+  // Agregar desde modo avanzado
+  const handleAddAdvanced = async () => {
+    const sku = advSku.trim();
+    const qty = Math.max(1, Math.floor(advQty || 1));
+    const disc = Math.min(100, Math.max(0, Number.isFinite(advDiscPct) ? advDiscPct : 0));
+
+    if (!sku) {
+      toast({ title: "Ingresá un SKU", variant: "destructive" });
+      return;
+    }
+
+    try {
+      setAdvLoading(true);
+
+      // Buscamos por SKU exacto, y si no hay exacto, intentamos por patrón
+      let prod: Product | null = null;
+
+      try {
+        const exact = await api.get<any>("/products", { sku }); // tu backend ya acepta filtro sku
+        const list = Array.isArray(exact) ? exact : (exact?.items ?? exact?.data ?? exact?.results ?? []);
+        if (Array.isArray(list) && list.length > 0) {
+          const found = list.find((p: any) => String(p.sku).toUpperCase() === sku.toUpperCase());
+          if (found) prod = found as Product;
+          else if (list.length === 1) prod = list[0] as Product;
+        }
+      } catch {}
+
+      if (!prod) {
+        // Plan B: comodín
+        const alt = await api.get<any>("/products", { sku: `${sku}%` });
+        const list = Array.isArray(alt) ? alt : (alt?.items ?? alt?.data ?? alt?.results ?? []);
+        if (Array.isArray(list) && list.length > 0) {
+          prod = list[0] as Product;
+        }
+      }
+
+      if (!prod) {
+        toast({ title: "SKU no encontrado", description: sku, variant: "destructive" });
+        return;
+      }
+
+      // Clampear por disponibilidad visible (stock - reservado - ya en pedido)
+      const baseAvail =
+        (typeof prod.available === "number"
+          ? prod.available
+          : Math.max(0, Number(prod.stock ?? 0) - Number(prod.reserved ?? 0))) || 0;
+      const already = inOrderMap[prod.id] ?? 0;
+      const disp = Math.max(0, baseAvail - already);
+      if (disp <= 0) {
+        toast({ title: "Sin disponibilidad", description: `${prod.name}`, variant: "destructive" });
+        return;
+      }
+      const finalQty = Math.min(qty, disp);
+
+      mergeOrPushItem({ product: prod, quantity: finalQty, discountPercent: disc });
+
+      // ✅ Reset campos del avanzado (así no “arrastra” cantidad anterior)
+      setAdvSku("");
+      setAdvQty(1);
+      setAdvDiscPct(0);
+    } catch (e: any) {
+      toast({
+        title: "No se pudo agregar",
+        description: e?.message ?? "Error al buscar/agregar por SKU",
+        variant: "destructive",
+      });
+    } finally {
+      setAdvLoading(false);
+    }
   };
 
   const handleRemoveItem = (id: string) => {
@@ -167,7 +243,7 @@ const NewOrder = () => {
       return;
     }
 
-    // Convertir % a monto por línea y agregar productName (requerido por CreateOrderDTO/OrderItemDTO)
+    // Convertir % a monto por línea y agregar productName (OrderItemDTO)
     const items: OrderItemDTO[] = orderItems.map((i) => {
       const line = i.unitPrice * i.quantity;
       const discountAmount = line * (i.discountPercent / 100);
@@ -269,66 +345,77 @@ const NewOrder = () => {
               </CardContent>
             </Card>
 
-            {/* Add Product Form */}
+            {/* Agregar Productos */}
             <Card>
               <CardHeader>
-                <CardTitle>Agregar Producto</CardTitle>
+                <CardTitle>Agregar Productos</CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-                  <div className="lg:col-span-2">
-                    <Label>Producto</Label>
-
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setIsProductModalOpen(true)}
-                      >
-                        Buscar / Filtrar productos
-                      </Button>
-                      <span className="text-sm text-muted-foreground">
-                        {selectedProductName}
-                      </span>
+              <CardContent className="space-y-5">
+                {/* Flujo principal: Modal de búsqueda */}
+                <div className="rounded-md border p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm text-muted-foreground">
+                      Usá el buscador para filtrar, ver disponibilidad y agregar con cantidad y descuento.
                     </div>
-                  </div>
-
-                  <div>
-                    <Label htmlFor="quantity">Cantidad</Label>
-                    <Input
-                      id="quantity"
-                      inputMode="numeric"
-                      type="number"
-                      min={1}
-                      value={currentQuantity}
-                      onChange={(e) => {
-                        const v = parseInt(e.target.value, 10);
-                        setCurrentQuantity(Number.isFinite(v) && v > 0 ? v : 1);
-                      }}
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="discount">Descuento (%)</Label>
-                    <Input
-                      id="discount"
-                      inputMode="decimal"
-                      type="number"
-                      min={0}
-                      max={100}
-                      value={currentDiscountPercent}
-                      onChange={(e) => {
-                        const v = parseFloat(e.target.value);
-                        const clamped = Math.min(100, Math.max(0, Number.isFinite(v) ? v : 0));
-                        setCurrentDiscountPercent(clamped);
-                      }}
-                    />
+                    <Button type="button" onClick={() => setIsProductModalOpen(true)}>
+                      <Search className="w-4 h-4 mr-2" />
+                      Buscar / Filtrar productos
+                    </Button>
                   </div>
                 </div>
 
-                <Button className="mt-4" onClick={handleAddItem}>
-                  <Plus className="h-4 w-4 mr-2" /> Agregar Producto
-                </Button>
+                {/* Modo Avanzado (SKU directo) */}
+                <div className="rounded-md border p-4 space-y-3">
+                  <div className="font-medium">Modo avanzado · Agregar por SKU</div>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div className="col-span-1">
+                      <Label htmlFor="advSku">SKU</Label>
+                      <Input
+                        id="advSku"
+                        placeholder="ABC123"
+                        value={advSku}
+                        onChange={(e) => setAdvSku(e.target.value)}
+                      />
+                    </div>
+                    <div className="col-span-1">
+                      <Label htmlFor="advQty">Cantidad</Label>
+                      <Input
+                        id="advQty"
+                        type="number"
+                        min={1}
+                        value={advQty}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value || "1", 10);
+                          setAdvQty(Number.isFinite(v) && v > 0 ? v : 1);
+                        }}
+                      />
+                    </div>
+                    <div className="col-span-1">
+                      <Label htmlFor="advDisc">Desc. (%)</Label>
+                      <Input
+                        id="advDisc"
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={0.5}
+                        value={advDiscPct}
+                        onChange={(e) => {
+                          const v = parseFloat(e.target.value);
+                          const clamped = Math.min(100, Math.max(0, Number.isFinite(v) ? v : 0));
+                          setAdvDiscPct(clamped);
+                        }}
+                      />
+                    </div>
+                    <div className="col-span-1 flex items-end">
+                      <Button className="w-full" onClick={handleAddAdvanced} disabled={advLoading}>
+                        Agregar
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Sugerencia: el sistema controla stock disponible (stock - reservado - ya en el pedido).
+                  </p>
+                </div>
               </CardContent>
             </Card>
 
@@ -473,10 +560,8 @@ const NewOrder = () => {
       <ProductSearchModal
         open={isProductModalOpen}
         onOpenChange={setIsProductModalOpen}
-        onPick={(p) => {
-          setCurrentProduct(p);
-          setIsProductModalOpen(false);
-        }}
+        onPick={handlePickFromModal}
+        inOrder={inOrderMap}
       />
     </div>
   );

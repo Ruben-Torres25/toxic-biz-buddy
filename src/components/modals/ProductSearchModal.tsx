@@ -14,6 +14,8 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   onPick: (payload: { product: Product; quantity: number; discountPercent: number }) => void;
   initialCategory?: string;
+  /** Cantidades ya elegidas en el pedido (fuera del modal): { [productId]: qty } */
+  inOrder?: Record<string, number>;
 };
 
 function normalizeProducts(resp: any): Product[] {
@@ -35,7 +37,13 @@ function buildSkuQuery(letters: string, numbers: string) {
   return `%${N}%`;
 }
 
-export default function ProductSearchModal({ open, onOpenChange, onPick, initialCategory }: Props) {
+export default function ProductSearchModal({
+  open,
+  onOpenChange,
+  onPick,
+  initialCategory,
+  inOrder = {},
+}: Props) {
   const [q, setQ] = useState("");
   const [category, setCategory] = useState(initialCategory ?? "all");
   const [codeLetters, setCodeLetters] = useState("");
@@ -45,15 +53,9 @@ export default function ProductSearchModal({ open, onOpenChange, onPick, initial
   const [results, setResults] = useState<Product[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  // Estados por fila (cantidad / %desc)
   const [rowQty, setRowQty] = useState<Record<string, number>>({});
   const [rowDisc, setRowDisc] = useState<Record<string, number>>({});
-
-  const setQty = (id: string, v: number) =>
-    setRowQty((m) => ({ ...m, [id]: Math.max(1, Math.floor(v || 1)) }));
-  const incQty = (id: string, step = 1) =>
-    setRowQty((m) => ({ ...m, [id]: Math.max(1, Math.floor((m[id] ?? 1) + step)) }));
-  const decQty = (id: string, step = 1) =>
-    setRowQty((m) => ({ ...m, [id]: Math.max(1, Math.floor((m[id] ?? 1) - step)) }));
 
   const setDisc = (id: string, v: number) =>
     setRowDisc((m) => ({
@@ -61,11 +63,13 @@ export default function ProductSearchModal({ open, onOpenChange, onPick, initial
       [id]: Math.min(100, Math.max(0, isFinite(v) ? v : 0)),
     }));
 
+  // key para “debounce”
   const debouncedKey = useMemo(
     () => JSON.stringify({ q, category, codeLetters, codeNumbers, open }),
     [q, category, codeLetters, codeNumbers, open]
   );
 
+  // Carga productos (debounced) al abrir o cambiar filtros
   useEffect(() => {
     if (!open) return;
     const timer = setTimeout(async () => {
@@ -108,10 +112,70 @@ export default function ProductSearchModal({ open, onOpenChange, onPick, initial
     return () => clearTimeout(timer);
   }, [debouncedKey]);
 
+  // Base disponible del backend o calculado
+  const availableBase = (p: Product) =>
+    (typeof p.available === "number"
+      ? p.available
+      : Math.max(0, Number(p.stock ?? 0) - Number(p.reserved ?? 0))) || 0;
+
+  // Disponibilidad visible SOLO considerando lo que ya está en el pedido (prop inOrder).
+  // Evitamos doble descuento (no hay estado local añadido).
+  const visibleAvailable = (p: Product) => {
+    const base = availableBase(p);
+    const alreadyInOrder = inOrder[p.id] ?? 0;
+    return Math.max(0, base - alreadyInOrder);
+  };
+
+  // Clamp helpers por fila
+  const clampQtyForProduct = (p: Product, value: number) => {
+    const disp = visibleAvailable(p);
+    const min = 1;
+    const max = Math.max(1, disp);
+    return Math.min(max, Math.max(min, Math.floor(value || 1)));
+  };
+
+  const setQtyForProduct = (p: Product, v: number) => {
+    setRowQty((m) => ({ ...m, [p.id]: clampQtyForProduct(p, v) }));
+  };
+
+  const incQtyForProduct = (p: Product, step = 1) => {
+    setRowQty((m) => {
+      const current = m[p.id] ?? 1;
+      return { ...m, [p.id]: clampQtyForProduct(p, current + step) };
+    });
+  };
+
+  const decQtyForProduct = (p: Product, step = 1) => {
+    setRowQty((m) => {
+      const current = m[p.id] ?? 1;
+      return { ...m, [p.id]: clampQtyForProduct(p, current - step) };
+    });
+  };
+
+  // Agregar y que el padre actualice inOrder; el siguiente render ya mostrará la disponibilidad correcta.
+  const add = (p: Product) => {
+    const disp = visibleAvailable(p);
+    if (disp <= 0) return;
+
+    const qtyRaw = rowQty[p.id] ?? 1;
+    const disc = rowDisc[p.id] ?? 0;
+
+    // NO permitimos pasar del disponible real
+    const qty = Math.min(qtyRaw, disp);
+    if (qty <= 0) return;
+
+    // Emitir al padre; el padre actualiza orderItems → inOrder se actualiza en el próximo render.
+    onPick({ product: p, quantity: qty, discountPercent: disc });
+
+    // Resetear controles de la fila
+    setRowQty((m) => ({ ...m, [p.id]: 1 }));
+    setRowDisc((m) => ({ ...m, [p.id]: 0 }));
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* ✅ no sobresale y es responsive */}
-      <DialogContent className="w-[96vw] sm:max-w-4xl md:max-w-5xl p-0 max-h-[90vh] overflow-hidden">
+      {/* ✅ responsive y sin salirse de la pantalla */}
+      <DialogContent className="w-[96vw] sm:max-w-4xl md:max-w-5xl p-0 max-h-[90vh] overflow-hidden" aria-describedby={undefined}>
         <DialogHeader className="px-6 pt-6">
           <DialogTitle>Buscar productos</DialogTitle>
         </DialogHeader>
@@ -201,6 +265,9 @@ export default function ProductSearchModal({ open, onOpenChange, onPick, initial
                   {results.map((p) => {
                     const qty = rowQty[p.id] ?? 1;
                     const disc = rowDisc[p.id] ?? 0;
+                    const disp = visibleAvailable(p);
+                    const disableAdd = disp <= 0 || qty <= 0;
+
                     return (
                       <tr key={p.id} className="border-b hover:bg-accent/30">
                         <td className="px-3 py-2 align-middle">{p.sku}</td>
@@ -208,8 +275,8 @@ export default function ProductSearchModal({ open, onOpenChange, onPick, initial
                         <td className="px-3 py-2 align-middle text-right">
                           ${Number(p.price ?? 0).toFixed(2)}
                         </td>
-                        <td className="px-3 py-2 align-middle text-center">
-                          {Math.max(0, Number(p.stock ?? 0) - Number(p.reserved ?? 0))}
+                        <td className="px-3 py-2 align-middle text-center tabular-nums">
+                          {disp}
                         </td>
 
                         <td className="px-3 py-2 align-middle">
@@ -218,7 +285,8 @@ export default function ProductSearchModal({ open, onOpenChange, onPick, initial
                               variant="outline"
                               size="icon"
                               className="h-7 w-7"
-                              onClick={() => decQty(p.id)}
+                              onClick={() => decQtyForProduct(p)}
+                              disabled={qty <= 1}
                             >
                               <Minus className="w-3 h-3" />
                             </Button>
@@ -227,17 +295,26 @@ export default function ProductSearchModal({ open, onOpenChange, onPick, initial
                               type="number"
                               min={1}
                               value={qty}
-                              onChange={(e) => setQty(p.id, parseInt(e.target.value || "1", 10))}
+                              onChange={(e) => {
+                                const raw = parseInt(e.target.value || "1", 10);
+                                setQtyForProduct(p, raw);
+                              }}
                             />
                             <Button
                               variant="outline"
                               size="icon"
                               className="h-7 w-7"
-                              onClick={() => incQty(p.id)}
+                              onClick={() => incQtyForProduct(p)}
+                              disabled={qty >= disp}
                             >
                               <Plus className="w-3 h-3" />
                             </Button>
                           </div>
+                          {qty > disp && (
+                            <div className="text-[11px] text-destructive mt-1 text-center">
+                              Máximo disponible: {disp}
+                            </div>
+                          )}
                         </td>
 
                         <td className="px-3 py-2 align-middle">
@@ -259,13 +336,8 @@ export default function ProductSearchModal({ open, onOpenChange, onPick, initial
                         <td className="px-3 py-2 align-middle text-center">
                           <Button
                             size="sm"
-                            onClick={() =>
-                              onPick({
-                                product: p,
-                                quantity: qty,
-                                discountPercent: disc,
-                              })
-                            }
+                            onClick={() => add(p)}
+                            disabled={disableAdd}
                           >
                             Agregar
                           </Button>

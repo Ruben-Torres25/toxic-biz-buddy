@@ -54,12 +54,14 @@ export interface OrderItemDTO {
   unitPrice: number;
   quantity: number;
   discount?: number;
+  /** Cantidad devuelta acumulada (se actualiza con notas de crédito) */
+  returnedQty?: number; // 👈 NUEVO
 }
 
 export interface OrderDTO {
   id: string;
   code: string | null;
-  status: "pending" | "confirmed" | "canceled";
+  status: "pending" | "confirmed" | "canceled" | "partially_returned" | "returned"; // ⬅️ agregado
   total: number;
   notes?: string;
   customer?: Customer;

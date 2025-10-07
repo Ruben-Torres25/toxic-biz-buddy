@@ -17,7 +17,8 @@ import { OrdersAPI } from "@/services/orders.api";
 import { CashAPI } from "@/services/cash.api";
 import type { OrderDTO } from "@/types/domain";
 
-type OrderStatus = "pending" | "confirmed" | "canceled";
+// ✅ Agregamos los nuevos estados
+type OrderStatus = "pending" | "confirmed" | "canceled" | "partially_returned" | "returned";
 
 export function OrdersSection() {
   const navigate = useNavigate();
@@ -54,6 +55,19 @@ export function OrdersSection() {
       }),
     retry: 1,
   });
+
+  // ✅ Refresco puntual del pedido (para NC, etc.)
+  const softRefresh = async (orderId: string) => {
+    try {
+      const fresh = await OrdersAPI.getById(orderId, ["customer","items"]);
+      const key = ["orders", { include: "customer,items", sort: "code_desc" }];
+      queryClient.setQueryData<OrderDTO[] | undefined>(key, (old) => {
+        if (!old) return old;
+        return old.map(o => (o.id === fresh.id ? fresh : o));
+      });
+      setSelectedOrder((curr) => (curr && curr.id === fresh.id ? fresh : curr));
+    } catch (e) { console.debug("softRefresh error", e); }
+  };
 
   // ---- Mutations ----
   const confirmOrderMutation = useMutation({
@@ -187,10 +201,17 @@ export function OrdersSection() {
       confirmado: "confirmed",
       completado: "confirmed",
       cancelado: "canceled",
+      // por si backend devuelve en español:
+      "devolución parcial": "partially_returned",
+      devuelto: "returned",
+      // ya en inglés:
+      partially_returned: "partially_returned",
+      returned: "returned",
+      pending: "pending",
+      confirmed: "confirmed",
+      canceled: "canceled",
     };
-    if (map[s]) return map[s] as OrderStatus;
-    if (["pending", "confirmed", "canceled"].includes(s)) return s as OrderStatus;
-    return undefined;
+    return map[s] ?? (["pending","confirmed","canceled","partially_returned","returned"].includes(s) ? (s as OrderStatus) : undefined);
   };
 
   const getStatusBadge = (status: OrderStatus | undefined) => {
@@ -216,6 +237,10 @@ export function OrdersSection() {
             Cancelado
           </Badge>
         );
+      case "partially_returned":
+        return <Badge className="bg-blue-100 text-blue-800 border-blue-200">Devolución parcial</Badge>;
+      case "returned":
+        return <Badge className="bg-muted text-foreground border-muted-foreground/20">Devuelto</Badge>;
       default:
         return <Badge variant="outline">—</Badge>;
     }
@@ -413,7 +438,7 @@ export function OrdersSection() {
                         ${Number(totalFromItems).toFixed(2)}
                       </td>
 
-                      <td className="py-3 px-4">{getStatusBadge(order.status)}</td>
+                      <td className="py-3 px-4">{getStatusBadge(order.status as OrderStatus)}</td>
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-2">
                           {/* Ver: siempre */}
@@ -500,6 +525,7 @@ export function OrdersSection() {
         open={isViewModalOpen}
         onOpenChange={setIsViewModalOpen}
         order={selectedOrder}
+        onSoftRefresh={softRefresh}
       />
       <EditOrderModal
         open={isEditModalOpen}
