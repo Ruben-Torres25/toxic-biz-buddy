@@ -1,16 +1,14 @@
+// src/components/dashboard/DashboardSection.tsx
 import { useState } from "react";
 import { StatsCard } from "./StatsCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { 
-  ShoppingCart, 
-  Users, 
-  Package, 
+import {
+  ShoppingCart,
+  Users,
   DollarSign,
-  TrendingUp,
   AlertTriangle,
   Clock,
-  CheckCircle
 } from "lucide-react";
 import { ViewOrderModal } from "@/components/modals/ViewOrderModal";
 import { EditOrderModal } from "@/components/modals/EditOrderModal";
@@ -20,90 +18,86 @@ export const DashboardSection = () => {
   const [isViewOrderOpen, setIsViewOrderOpen] = useState(false);
   const [isEditOrderOpen, setIsEditOrderOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
-  
-  // Mock data for demonstration
+
+  // ---- Tus stats mock originales ----
   const stats = [
     {
       title: "Ventas del Día",
       value: "$12,450",
       icon: DollarSign,
       trend: { value: 8.2, isPositive: true },
-      variant: "success" as const
+      variant: "success" as const,
     },
     {
       title: "Pedidos Activos",
       value: 23,
       icon: ShoppingCart,
-      trend: { value: 12, isPositive: true }
+      trend: { value: 12, isPositive: true },
     },
     {
       title: "Clientes Totales",
       value: 142,
       icon: Users,
-      trend: { value: 5.1, isPositive: true }
+      trend: { value: 5.1, isPositive: true },
     },
     {
       title: "Stock Bajo",
       value: 7,
       icon: AlertTriangle,
-      variant: "warning" as const
-    }
+      variant: "warning" as const,
+    },
   ];
 
   const recentOrders = [
-    { 
-      id: "001", 
-      client: "María García", 
-      total: 450, 
-      status: "Completado", 
+    {
+      id: "001",
+      client: "María García",
+      total: 450,
+      status: "Completado",
       time: "10:30 AM",
       date: "2024-01-08",
       paymentMethod: "Efectivo",
       address: "Calle Mayor 123, Madrid",
       items: [
         { product: "Detergente Líquido", quantity: 5, price: 45, discount: 5, total: 220 },
-        { product: "Desinfectante Multiuso", quantity: 3, price: 80, discount: 10, total: 230 }
-      ]
+        { product: "Desinfectante Multiuso", quantity: 3, price: 80, discount: 10, total: 230 },
+      ],
     },
-    { 
-      id: "002", 
-      client: "Carlos López", 
-      total: 230, 
-      status: "Pendiente", 
+    {
+      id: "002",
+      client: "Carlos López",
+      total: 230,
+      status: "Pendiente",
       time: "11:15 AM",
       date: "2024-01-08",
       paymentMethod: "Transferencia",
       address: "Avenida España 45, Barcelona",
       items: [
         { product: "Jabón en Polvo", quantity: 2, price: 65, discount: 0, total: 130 },
-        { product: "Limpiador de Vidrios", quantity: 4, price: 25, discount: 0, total: 100 }
-      ]
+        { product: "Limpiador de Vidrios", quantity: 4, price: 25, discount: 0, total: 100 },
+      ],
     },
-    { 
-      id: "003", 
-      client: "Ana Rodríguez", 
-      total: 680, 
-      status: "Pendiente", 
+    {
+      id: "003",
+      client: "Ana Rodríguez",
+      total: 680,
+      status: "Pendiente",
       time: "12:00 PM",
       date: "2024-01-08",
       paymentMethod: "Tarjeta",
       address: "Plaza Central 8, Valencia",
-      items: [
-        { product: "Detergente Industrial", quantity: 10, price: 68, discount: 0, total: 680 }
-      ]
+      items: [{ product: "Detergente Industrial", quantity: 10, price: 68, discount: 0, total: 680 }],
     },
-    { 
-      id: "004", 
-      client: "Luis Martín", 
-      total: 320, 
-      status: "Completado", 
+    {
+      id: "004",
+      client: "Luis Martín",
+      total: 320,
+      status: "Completado",
       time: "12:45 PM",
       date: "2024-01-08",
       paymentMethod: "Efectivo",
       address: "Calle Sol 67, Sevilla",
-      items: [
-        { product: "Cloro Industrial", quantity: 8, price: 40, discount: 0, total: 320 }
-      ]
+      items: [{ product: "Cloro Industrial", quantity: 8, price: 40, discount: 0, total: 320 }],
     },
   ];
 
@@ -133,6 +127,7 @@ export const DashboardSection = () => {
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Dashboard</h1>
@@ -144,7 +139,7 @@ export const DashboardSection = () => {
         </Button>
       </div>
 
-      {/* Stats Grid */}
+      {/* Stats Grid (solo tus stats, sin historial) */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat, index) => (
           <StatsCard
@@ -160,7 +155,7 @@ export const DashboardSection = () => {
 
       {/* Content Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recent Orders */}
+        {/* Pedidos Recientes */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -171,25 +166,31 @@ export const DashboardSection = () => {
           <CardContent>
             <div className="space-y-3">
               {recentOrders.map((order) => (
-                <div 
-                  key={order.id} 
+                <div
+                  key={order.id}
                   className="flex items-center justify-between p-3 rounded-lg bg-accent/30 hover:bg-accent/50 transition-colors cursor-pointer"
                   onClick={() => handleViewOrder(order)}
                 >
                   <div className="flex items-center gap-3">
-                    <div className={`w-2 h-2 rounded-full ${
-                      order.status === "Completado" ? "bg-success" : "bg-warning"
-                    }`} />
+                    <div
+                      className={`w-2 h-2 rounded-full ${
+                        order.status === "Completado" ? "bg-success" : "bg-warning"
+                      }`}
+                    />
                     <div>
                       <p className="font-medium text-foreground">{order.client}</p>
-                      <p className="text-sm text-muted-foreground">#{order.id} - {order.time}</p>
+                      <p className="text-sm text-muted-foreground">
+                        #{order.id} - {order.time}
+                      </p>
                     </div>
                   </div>
                   <div className="text-right">
                     <p className="font-semibold text-foreground">${order.total}</p>
-                    <p className={`text-xs ${
-                      order.status === "Completado" ? "text-success" : "text-warning"
-                    }`}>
+                    <p
+                      className={`text-xs ${
+                        order.status === "Completado" ? "text-success" : "text-warning"
+                      }`}
+                    >
                       {order.status}
                     </p>
                   </div>
@@ -199,7 +200,7 @@ export const DashboardSection = () => {
           </CardContent>
         </Card>
 
-        {/* Low Stock Products */}
+        {/* Stock Bajo */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -210,10 +211,15 @@ export const DashboardSection = () => {
           <CardContent>
             <div className="space-y-3">
               {lowStockProducts.map((product, index) => (
-                <div key={index} className="flex items-center justify-between p-3 rounded-lg bg-warning/10 border border-warning/20">
+                <div
+                  key={index}
+                  className="flex items-center justify-between p-3 rounded-lg bg-warning/10 border border-warning/20"
+                >
                   <div>
                     <p className="font-medium text-foreground">{product.name}</p>
-                    <p className="text-sm text-muted-foreground">Mínimo: {product.min} unidades</p>
+                    <p className="text-sm text-muted-foreground">
+                      Mínimo: {product.min} unidades
+                    </p>
                   </div>
                   <div className="text-right">
                     <p className="font-bold text-warning">{product.stock}</p>
@@ -226,13 +232,13 @@ export const DashboardSection = () => {
         </Card>
       </div>
 
-      <ViewOrderModal 
+      <ViewOrderModal
         open={isViewOrderOpen}
         onOpenChange={setIsViewOrderOpen}
         order={selectedOrder}
         onEdit={handleEditOrder}
       />
-      
+
       <EditOrderModal
         open={isEditOrderOpen}
         onOpenChange={setIsEditOrderOpen}
