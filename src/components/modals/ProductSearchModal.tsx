@@ -205,6 +205,7 @@ export default function ProductSearchModal({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todas</SelectItem>
+                  {/* Podés reemplazar por categorías reales si tenés endpoint */}
                   <SelectItem value="remeras">Remeras</SelectItem>
                   <SelectItem value="pantalones">Pantalones</SelectItem>
                   <SelectItem value="zapatillas">Zapatillas</SelectItem>
@@ -225,9 +226,7 @@ export default function ProductSearchModal({
                 <Input
                   placeholder="123"
                   value={codeNumbers}
-                  onChange={(e) =>
-                    setCodeNumbers(e.target.value.replace(/[^0-9]/g, ""))
-                  }
+                  onChange={(e) => setCodeNumbers(e.target.value.replace(/[^0-9]/g, ""))}
                   maxLength={6}
                   inputMode="numeric"
                 />
@@ -334,11 +333,7 @@ export default function ProductSearchModal({
                         </td>
 
                         <td className="px-3 py-2 align-middle text-center">
-                          <Button
-                            size="sm"
-                            onClick={() => add(p)}
-                            disabled={disableAdd}
-                          >
+                          <Button size="sm" onClick={() => add(p)} disabled={disableAdd}>
                             Agregar
                           </Button>
                         </td>

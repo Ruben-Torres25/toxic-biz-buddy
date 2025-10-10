@@ -1,381 +1,580 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { toast } from "@/hooks/use-toast";
-import { CashAPI, CashCurrent } from "@/services/cash.api";
-import type { CashMovement } from "@/types/domain";
 import {
-  AlertCircle,
-  CreditCard,
-  TrendingUp,
-  TrendingDown,
-  History,
-  PiggyBank,
-  ArrowDownToLine,
-  ArrowUpFromLine,
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { useToast } from "@/hooks/use-toast";
+import { CashAPI } from "@/services/cash.api";
+import { useCart } from "@/hooks/useCart";
+import CartTable from "@/components/sections/CartTable";
+import PaymentPanel from "@/components/sections/PaymentPanel";
+
+import { money, number } from "@/utils/format";
+import {
+  ShoppingCart,
+  Plus,
+  Printer,
+  LogIn,
+  LogOut,
+  CheckCircle2,
+  ListOrdered,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import type { PaymentMethod } from "@/types/sales";
+import type { Product } from "@/types/domain";
+import ProductSearchModal from "../modals/ProductSearchModal";
 
-export function CashSection() {
-  const queryClient = useQueryClient();
+type Movement = {
+  id: string;
+  createdAt: string;
+  occurredAt?: string | null;
+  type: "income" | "expense" | "sale";
+  amount: number;
+  description: string;
+};
 
-  const [movType, setMovType] = useState<"deposit" | "withdrawal">("deposit");
-  const [movAmount, setMovAmount] = useState<string>("");
-  const [movDesc, setMovDesc] = useState<string>("");
-  const [openAmount, setOpenAmount] = useState<string>("0");
+export const CashSection = () => {
+  const { toast } = useToast();
+  const qc = useQueryClient();
 
-  // Traemos todo desde /cash/current (incluye isOpen)
+  // Carrito
   const {
-    data: current,
-    isLoading: loadingCurrent,
-    refetch: refetchCurrent,
-  } = useQuery<CashCurrent>({
-    queryKey: ["cash", "current"],
+    lines,
+    addLine,
+    removeLine,
+    setQty,
+    setPrice,
+    setDiscountLine,
+    discountGlobal,
+    setDiscountGlobal,
+    payments,
+    setPayment,
+    totals,
+    clearCart,
+    notes,
+    setNotes,
+  } = useCart();
+
+  // Estado de caja (resumen diario)
+  const { data: cashCur, isLoading: loadingCur } = useQuery({
+    queryKey: ["cash-current"],
     queryFn: () => CashAPI.current(),
-    retry: 1,
+    staleTime: 15_000,
   });
+  const isOpen = !!cashCur?.isOpen;
 
-  const { data: movements = [], isLoading: loadingMovs } = useQuery<CashMovement[]>({
-    queryKey: ["cash", "movements"],
+  // Movimientos de hoy (para “Ventas del día”)
+  const { data: movsToday } = useQuery({
+    queryKey: ["cash-movements"],
     queryFn: () => CashAPI.movements(),
-    retry: 1,
+    staleTime: 5_000,
   });
 
-  const isOpen = current?.isOpen;
+  const salesToday: Movement[] = useMemo(
+    () => (Array.isArray(movsToday) ? (movsToday as Movement[]).filter((m) => m.type === "sale") : []),
+    [movsToday]
+  );
+  const salesTotal = salesToday.reduce((acc, m) => acc + Number(m.amount || 0), 0);
 
-  const addMovement = useMutation({
-    mutationFn: (p: { amount: number; type: string; description: string }) => CashAPI.movement(p as any),
-    onSuccess: async () => {
-      toast({ title: "Movimiento registrado" });
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["cash", "current"] }),
-        queryClient.invalidateQueries({ queryKey: ["cash", "movements"] }),
-      ]);
-      setMovAmount("");
-      setMovDesc("");
-    },
-    onError: (e: any) => {
-      toast({
-        title: "No se pudo registrar el movimiento",
-        description: e?.message ?? "Error desconocido",
-        variant: "destructive",
-      });
-    },
-  });
-
-  const openCash = useMutation({
+  // Abrir / Cerrar caja
+  const openMutation = useMutation({
     mutationFn: (amount: number) => CashAPI.open(amount),
-    onSuccess: async () => {
+    onSuccess: () => {
       toast({ title: "Caja abierta" });
-      await refetchCurrent();
+      qc.invalidateQueries({ queryKey: ["cash-current"] });
     },
-    onError: (e: any) => {
+    onError: (e: any) =>
       toast({
-        title: "No se pudo abrir la caja",
+        title: "No se pudo abrir caja",
         description: e?.message ?? "Error",
         variant: "destructive",
-      });
-    },
+      }),
   });
 
-  const closeCash = useMutation({
+  const closeMutation = useMutation({
     mutationFn: (amount: number) => CashAPI.close(amount),
-    onSuccess: async () => {
+    onSuccess: () => {
       toast({ title: "Caja cerrada" });
-      await refetchCurrent();
+      qc.invalidateQueries({ queryKey: ["cash-current"] });
     },
-    onError: (e: any) => {
+    onError: (e: any) =>
       toast({
-        title: "No se pudo cerrar la caja",
+        title: "No se pudo cerrar caja",
         description: e?.message ?? "Error",
         variant: "destructive",
-      });
-    },
+      }),
   });
 
-  const n = (v: any) => Number(v ?? 0);
-  const fmt = (v: any) => n(v).toLocaleString("es-AR", { style: "currency", currency: "ARS" });
+  // ------ Buscar/Agregar productos con Modal ------
+  const [showSearch, setShowSearch] = useState(false);
 
-  const openingAmount = n(current?.openingAmount);
-  const totalIncome = n(current?.totalIncome);
-  const totalExpense = n(current?.totalExpense);
-  const totalSales = n(current?.totalSales);
-  const balance = n(current?.balance);
+  // Mapa de cantidades ya en el carrito (para que el modal muestre disponibilidad restante)
+  const inOrder = useMemo<Record<string, number>>(() => {
+    const map: Record<string, number> = {};
+    for (const l of lines) {
+      map[l.productId] = (map[l.productId] || 0) + Number(l.qty || 0);
+    }
+    return map;
+  }, [lines]);
 
-  const calcOpening = balance - totalIncome + totalExpense - totalSales;
-  const showCalcOpening = openingAmount === 0 && Math.abs(calcOpening) > 0.0001;
+  function addProductToCart(payload: {
+    product: Product;
+    quantity: number;
+    discountPercent: number;
+  }) {
+    const { product, quantity, discountPercent } = payload;
+    const unit = Number(product.price || 0);
+    const discAbsPerUnit =
+      Math.round(unit * (Math.max(0, Math.min(100, discountPercent)) / 100) * 100) / 100;
 
-  const sortedMovs = useMemo(() => {
-    const arr = Array.isArray(movements) ? movements : [];
-    return [...arr].sort((a: any, b: any) => {
-      const da = new Date(a.createdAt).getTime() || 0;
-      const db = new Date(b.createdAt).getTime() || 0;
-      return db - da;
+    addLine({
+      productId: product.id,
+      sku: product.sku,
+      name: product.name,
+      price: unit,
+      qty: Math.max(1, Math.floor(quantity || 1)),
+      discount: discAbsPerUnit, // descuento absoluto por unidad
     });
-  }, [movements]);
+  }
 
+  // ✅ Confirmar venta SOLO si la caja está abierta y el pago cubre el total
+  const canConfirm = useMemo(() => {
+    const total = totals.total;
+    const pagos = totals.pagos;
+    return isOpen && total > 0 && pagos >= total;
+  }, [isOpen, totals]);
+
+  const checkoutMutation = useMutation({
+    mutationFn: async () => {
+      const payload = {
+        items: lines.map((l) => ({
+          productId: l.productId,
+          qty: l.qty,
+          price: l.price,
+          discount: l.discount || 0,
+        })),
+        payments: payments.map((p) => ({ method: p.method, amount: p.amount })),
+        notes: notes?.trim() || undefined,
+        discountGlobal: discountGlobal || 0,
+      };
+      const sale = await CashAPI.checkout(payload);
+      return sale;
+    },
+    onSuccess: () => {
+      toast({
+        title: "Venta confirmada",
+        description: `Se registró correctamente`,
+        duration: 3000,
+      });
+      clearCart();
+      // ❌ No imprimimos
+      // window.print?.();
+
+      // refrescar resumen y ventas del día
+      qc.invalidateQueries({ queryKey: ["cash-current"] });
+      qc.invalidateQueries({ queryKey: ["cash-movements"] });
+      qc.invalidateQueries({ queryKey: ["history-list"] });
+    },
+    onError: (e: any) =>
+      toast({
+        title: "No se pudo confirmar",
+        description: e?.message ?? "Error",
+        variant: "destructive",
+      }),
+  });
+
+  // pagos rápidos
+  function handleAutofill(method: PaymentMethod, value: number) {
+    setPayment(method, Math.max(0, value));
+  }
+
+  // Atajo F2 para abrir modal
   useEffect(() => {
-    if (!isNaN(balance)) setOpenAmount(String(balance));
-  }, [balance]);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "F2") {
+        e.preventDefault();
+        setShowSearch(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Estado: ver detalle ventas
+  const [showSalesDetail, setShowSalesDetail] = useState(false);
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <ShoppingCart className="w-6 h-6 text-primary" />
           <div>
-            <h1 className="text-3xl font-bold text-foreground">Caja</h1>
-            <p className="text-muted-foreground">Apertura, cierre y movimientos del día</p>
+            <h1 className="text-3xl font-bold">Caja</h1>
+            <p className="text-muted-foreground">Escaneá, agregá al carrito y cobrá</p>
           </div>
-          <StatusChip isOpen={isOpen} />
         </div>
 
-        <div className="flex gap-2">
-          {isOpen === true ? (
-            <Button
-              onClick={() => closeCash.mutate(balance)}
-              variant="secondary"
-              disabled={closeCash.isPending}
-            >
-              <ArrowUpFromLine className="w-4 h-4 mr-2" />
-              Cerrar caja
-            </Button>
+        {/* Estado + acciones */}
+        <div className="flex items-center gap-2">
+          {loadingCur ? (
+            <Badge variant="outline" className="border-muted/30 text-muted-foreground">
+              Cargando…
+            </Badge>
+          ) : isOpen ? (
+            <Badge variant="outline" className="border-success/30 text-success" title="Caja abierta">
+              <LogIn className="w-4 h-4 mr-1" /> Abierta
+            </Badge>
           ) : (
-            <div className="flex items-center gap-2">
-              <Input
-                className="w-28"
-                type="number"
-                step="1"
-                value={openAmount}
-                onChange={(e) => setOpenAmount(e.target.value)}
-                placeholder="Monto"
+            <Badge variant="outline" className="border-destructive/30 text-destructive" title="Caja cerrada">
+              <LogOut className="w-4 h-4 mr-1" /> Cerrada
+            </Badge>
+          )}
+
+          {!isOpen ? (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="default" data-testid="btn-open-cash">
+                  <LogIn className="w-4 h-4 mr-2" />
+                  Abrir caja
+                </Button>
+              </AlertDialogTrigger>
+              <OpenCashDialog
+                onConfirm={(amount) => openMutation.mutate(amount)}
+                isLoading={openMutation.isPending}
               />
-              <Button
-                onClick={() => openCash.mutate(Number(openAmount || 0))}
-                variant="default"
-                disabled={openCash.isPending}
-              >
-                <ArrowDownToLine className="w-4 h-4 mr-2" />
-                Abrir caja
-              </Button>
-            </div>
+            </AlertDialog>
+          ) : (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" data-testid="btn-close-cash">
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Cerrar caja
+                </Button>
+              </AlertDialogTrigger>
+              <CloseCashDialog
+                onConfirm={(amount) => closeMutation.mutate(amount)}
+                isLoading={closeMutation.isPending}
+              />
+            </AlertDialog>
           )}
         </div>
       </div>
 
-      {isOpen === false && (
-        <div className={cn("border border-amber-300/60 bg-amber-50 text-amber-900 p-3 rounded-xl flex items-center gap-2")}>
-          <AlertCircle className="w-4 h-4" />
-          <span>La caja está <b>cerrada</b>. Abrila para poder confirmar pedidos y registrar ventas.</span>
-        </div>
-      )}
+      {/* Resumen del día + Ventas del día */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Resumen */}
+        <Card className="lg:col-span-2">
+          <CardHeader className="py-3">
+            <CardTitle className="text-base">Resumen del día</CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-2 md:grid-cols-6 gap-2 text-sm">
+            <Info name="Apertura" value={money(cashCur?.openingAmount ?? 0)} />
+            <Info name="Ventas" value={money(cashCur?.totalSales ?? 0)} />
+            <Info name="Ingresos" value={money(cashCur?.totalIncome ?? 0)} />
+            <Info name="Egresos" value={money(cashCur?.totalExpense ?? 0)} />
+            <Info name="Balance" value={money(cashCur?.balance ?? 0)} />
+            <Info name="Estado" value={cashCur?.isOpen ? "Abierta" : "Cerrada"} />
+          </CardContent>
+        </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Resumen del día</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {loadingCurrent ? (
-            <div className="text-sm text-muted-foreground">Cargando resumen…</div>
-          ) : current ? (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-              <Kpi label="Fecha" value={current.date ?? "—"} />
-              <Kpi
-                label="Apertura"
-                value={fmt(openingAmount)}
-                hint={showCalcOpening ? `Apertura calculada: ${fmt(calcOpening)}` : undefined}
-                emphasis={showCalcOpening}
-                extraBadge={showCalcOpening ? "calculada" : undefined}
-              />
-              <Kpi label="Ingresos" value={fmt(totalIncome)} />
-              <Kpi label="Egresos" value={fmt(totalExpense)} />
-              <Kpi label="Ventas" value={fmt(totalSales)} />
-              <Kpi label="Balance" value={fmt(balance)} emphasis />
-            </div>
-          ) : (
-            <div className="text-sm text-muted-foreground">Sin datos.</div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Movimiento manual</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-col md:flex-row gap-3">
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant={movType === "deposit" ? "default" : "outline"}
-                onClick={() => setMovType("deposit")}
-                className="gap-2"
-              >
-                <TrendingUp className="w-4 h-4" /> Ingreso
-              </Button>
-              <Button
-                type="button"
-                variant={movType === "withdrawal" ? "default" : "outline"}
-                onClick={() => setMovType("withdrawal")}
-                className="gap-2"
-              >
-                <TrendingDown className="w-4 h-4" /> Egreso
-              </Button>
-            </div>
-            <Input
-              type="number"
-              inputMode="decimal"
-              placeholder="Monto"
-              className="md:w-40"
-              value={movAmount}
-              onChange={(e) => setMovAmount(e.target.value)}
-            />
-            <Input
-              type="text"
-              placeholder="Descripción"
-              className="flex-1"
-              value={movDesc}
-              onChange={(e) => setMovDesc(e.target.value)}
-            />
-            <Button
-              onClick={() => {
-                const val = Number(movAmount);
-                if (!val || val <= 0) {
-                  toast({ title: "Ingresá un monto válido", variant: "destructive" });
-                  return;
-                }
-                const kind = movType === "withdrawal" ? "expense" : "income";
-                addMovement.mutate({
-                  amount: val,
-                  type: kind,
-                  description: movDesc || (kind === "income" ? "Ingreso manual" : "Egreso manual"),
-                });
-              }}
-              className="md:w-40"
-              disabled={addMovement.isPending}
-            >
-              {movType === "deposit" ? <PiggyBank className="w-4 h-4 mr-2" /> : <History className="w-4 h-4 mr-2" />}
-              Registrar
+        {/* Ventas del día */}
+        <Card>
+          <CardHeader className="py-3 flex flex-row items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2">
+              <ListOrdered className="w-4 h-4" /> Ventas de hoy
+            </CardTitle>
+            <Button size="sm" variant="outline" onClick={() => setShowSalesDetail(true)}>
+              Ver detalle
             </Button>
-          </div>
-          <div className="text-xs text-muted-foreground">
-            Tip: podés usar valores negativos solo para egresos. Para ingresos, el monto debe ser positivo.
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Movimientos</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {loadingMovs ? (
-            <div className="text-sm text-muted-foreground">Cargando movimientos…</div>
-          ) : sortedMovs.length === 0 ? (
-            <div className="text-sm text-muted-foreground">Aún no hay movimientos.</div>
-          ) : (
-            <div className="space-y-2">
-              {sortedMovs.map((m) => {
-                const isOut = m.type === "expense";
-                const sign = isOut ? "-" : "+";
-                const icon = isOut ? (
-                  <TrendingDown className="w-4 h-4" />
-                ) : m.type === "sale" ? (
-                  <CreditCard className="w-4 h-4" />
-                ) : (
-                  <TrendingUp className="w-4 h-4" />
-                );
-                const when = new Date(m.createdAt).toLocaleString();
-
-                return (
-                  <div
-                    key={m.id}
-                    className="flex items-center justify-between border rounded-xl p-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={cn(
-                          "w-8 h-8 rounded-full flex items-center justify-center",
-                          isOut ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700"
-                        )}
-                      >
-                        {icon}
-                      </div>
-                      <div>
-                        <div className="font-medium">{m.description}</div>
-                        <div className="text-xs text-muted-foreground">{when}</div>
-                      </div>
-                    </div>
-                    <div className={cn("font-semibold", isOut ? "text-red-700" : "text-emerald-700")}>
-                      {sign}
-                      {n(Math.abs(Number(m.amount))).toLocaleString("es-AR", { style: "currency", currency: "ARS" })}
-                    </div>
-                  </div>
-                );
-              })}
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Cantidad</span>
+              <span className="font-medium">{number(salesToday.length)}</span>
             </div>
-          )}
-        </CardContent>
-      </Card>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Total</span>
+              <span className="font-medium">{money(salesTotal)}</span>
+            </div>
+            <div className="border rounded-md">
+              <ScrollArea className="max-h-40">
+                <ul className="text-sm divide-y">
+                  {salesToday.slice(0, 2).map((s) => {
+                    const when = new Date(s.occurredAt || s.createdAt);
+                    const hh = String(when.getHours()).padStart(2, "0");
+                    const mm = String(when.getMinutes()).padStart(2, "0");
+                    return (
+                      <li key={s.id} className="px-3 py-2 flex items-center justify-between">
+                        <span className="text-muted-foreground">
+                          {hh}:{mm}
+                        </span>
+                        <span className="flex-1 mx-2 truncate">{s.description || "Venta"}</span>
+                        <span className="font-medium">{money(Number(s.amount || 0))}</span>
+                      </li>
+                    );
+                  })}
+                  {salesToday.length === 0 && (
+                    <li className="px-3 py-6 text-center text-muted-foreground">Sin ventas aún</li>
+                  )}
+                </ul>
+              </ScrollArea>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Carrito + pagos */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-4">
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-base">Carrito</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <CartTable
+                lines={lines}
+                onQty={setQty}
+                onPrice={setPrice}
+                onDiscount={setDiscountLine}
+                onRemove={removeLine}
+              />
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="md:col-span-2">
+                  <label className="text-sm text-muted-foreground">Observaciones</label>
+                  <Input
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Notas del ticket (opcional)"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-muted-foreground">Descuento global ($)</label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={discountGlobal}
+                    onChange={(e) => setDiscountGlobal(Math.max(0, Number(e.target.value || 0)))}
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between border rounded-md p-3 text-sm">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span>Ítems:</span> <b className="tabular-nums">{number(lines.length)}</b>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span>Subtotal:</span> <b className="tabular-nums">{money(totals.subtotal)}</b>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span>Desc. global:</span> <b className="tabular-nums">{money(discountGlobal)}</b>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-muted-foreground">Total</div>
+                  <div className="text-2xl font-bold tabular-nums">{money(totals.total)}</div>
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowSearch(true)}
+                  title="Abrir buscador de productos"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Agregar al carrito
+                </Button>
+                <Button variant="outline" onClick={() => {}} title="Imprimir" disabled>
+                  <Printer className="w-4 h-4 mr-2" />
+                  Imprimir (deshabilitado)
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="space-y-4">
+          <PaymentPanel
+            total={totals.total}
+            current={{
+              cash: payments.find((p) => p.method === "cash")?.amount || 0,
+              debit: payments.find((p) => p.method === "debit")?.amount || 0,
+              credit: payments.find((p) => p.method === "credit")?.amount || 0,
+              transfer: payments.find((p) => p.method === "transfer")?.amount || 0,
+            }}
+            onSetPayment={(m, a) =>
+              setPayment(m, Math.max(0, Math.round(Number(a || 0) * 100) / 100))
+            }
+            onAutofill={(m, v) =>
+              setPayment(m, Math.max(0, Math.round(Number(v || 0) * 100) / 100))
+            }
+          />
+
+          <ConfirmButton
+            disabled={lines.length === 0 || !canConfirm || checkoutMutation.isPending}
+            loading={checkoutMutation.isPending}
+            onConfirm={() => checkoutMutation.mutate()}
+          />
+        </div>
+      </div>
+
+      {/* Modal de búsqueda/selección */}
+      <ProductSearchModal
+        open={showSearch}
+        onOpenChange={setShowSearch}
+        onPick={addProductToCart}
+        inOrder={inOrder}
+      />
+
+      {/* Modal Detalle de Ventas del Día */}
+      <Dialog open={showSalesDetail} onOpenChange={setShowSalesDetail}>
+        <DialogContent className="max-w-3xl" aria-describedby={undefined}>
+          <DialogHeader>
+            <DialogTitle>Ventas de hoy</DialogTitle>
+          </DialogHeader>
+          <div className="border rounded-md">
+            <div className="flex items-center justify-between px-3 py-2 text-sm">
+              <span className="text-muted-foreground">
+                Cantidad: <b>{number(salesToday.length)}</b>
+              </span>
+              <span className="text-muted-foreground">
+                Total: <b>{money(salesTotal)}</b>
+              </span>
+            </div>
+            <ScrollArea className="max-h-[55vh]">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 sticky top-0">
+                  <tr className="border-b">
+                    <th className="px-3 py-2 text-left w-[18%]">Hora</th>
+                    <th className="px-3 py-2 text-left">Descripción</th>
+                    <th className="px-3 py-2 text-right w-[20%]">Importe</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {salesToday.map((s) => {
+                    const when = new Date(s.occurredAt || s.createdAt);
+                    const hh = String(when.getHours()).padStart(2, "0");
+                    const mm = String(when.getMinutes()).padStart(2, "0");
+                    return (
+                      <tr key={s.id} className="border-b">
+                        <td className="px-3 py-2 align-middle text-muted-foreground">
+                          {hh}:{mm}
+                        </td>
+                        <td className="px-3 py-2 align-middle">{s.description || "Venta"}</td>
+                        <td className="px-3 py-2 align-middle text-right">{money(Number(s.amount || 0))}</td>
+                      </tr>
+                    );
+                  })}
+                  {salesToday.length === 0 && (
+                    <tr>
+                      <td className="px-3 py-8 text-center text-muted-foreground" colSpan={3}>
+                        No hay ventas registradas hoy.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </ScrollArea>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+/* ---------- helpers UI ---------- */
+function Info({ name, value }: { name: string; value: string }) {
+  return (
+    <div className="rounded-md border p-2 flex flex-col gap-1">
+      <span className="text-[11px] text-muted-foreground">{name}</span>
+      <span className="font-medium tabular-nums">{value}</span>
     </div>
   );
 }
 
-function Kpi({
-  label,
-  value,
-  emphasis = false,
-  hint,
-  extraBadge,
+function ConfirmButton({
+  disabled,
+  loading,
+  onConfirm,
 }: {
-  label: string;
-  value: string;
-  emphasis?: boolean;
-  hint?: string;
-  extraBadge?: string;
+  disabled: boolean;
+  loading: boolean;
+  onConfirm: () => void;
 }) {
   return (
-    <div className={cn("p-3 border rounded-xl relative", emphasis ? "bg-primary/5" : "")}>
-      <div className="flex items-center justify-between">
-        <div className="text-xs text-muted-foreground">{label}</div>
-        {extraBadge && (
-          <Badge className="text-[10px] py-0 px-1.5 bg-primary/10 text-primary border-primary/20">
-            {extraBadge}
-          </Badge>
-        )}
-      </div>
-      <div className={cn("text-lg font-semibold", emphasis ? "text-primary" : "text-foreground")}>
-        {value}
-      </div>
-      {hint && (
-        <div className="mt-1 text-[11px] text-muted-foreground">{hint}</div>
-      )}
-    </div>
+    <Button className="w-full h-12 text-base" disabled={disabled || loading} onClick={onConfirm}>
+      {loading ? "Confirmando…" : (<><CheckCircle2 className="w-5 h-5 mr-2" /> Confirmar venta</>)}
+    </Button>
   );
 }
 
-function StatusChip({ isOpen }: { isOpen?: boolean }) {
-  if (isOpen === true) {
-    return (
-      <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">
-        • Caja abierta
-      </Badge>
-    );
-  }
-  if (isOpen === false) {
-    return (
-      <Badge className="bg-amber-100 text-amber-700 border-amber-200">
-        • Caja cerrada
-      </Badge>
-    );
-  }
+function OpenCashDialog({
+  onConfirm,
+  isLoading,
+}: {
+  onConfirm: (amount: number) => void;
+  isLoading: boolean;
+}) {
+  const [amount, setAmount] = useState<number>(0);
   return (
-    <Badge className="bg-slate-100 text-slate-700 border-slate-200">
-      • Estado desconocido
-    </Badge>
+    <AlertDialogContent>
+      <AlertDialogHeader>
+        <AlertDialogTitle>Abrir caja</AlertDialogTitle>
+        <AlertDialogDescription>Ingresá el fondo inicial.</AlertDialogDescription>
+      </AlertDialogHeader>
+      <div className="py-2">
+        <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(Number(e.target.value || 0))} />
+      </div>
+      <AlertDialogFooter>
+        <AlertDialogCancel>Cancelar</AlertDialogCancel>
+        <AlertDialogAction onClick={() => onConfirm(amount)} disabled={isLoading} data-testid="confirm-open-cash">
+          {isLoading ? "Abriendo…" : "Abrir"}
+        </AlertDialogAction>
+      </AlertDialogFooter>
+    </AlertDialogContent>
   );
 }
 
-export default CashSection;
+function CloseCashDialog({
+  onConfirm,
+  isLoading,
+}: {
+  onConfirm: (amount: number) => void;
+  isLoading: boolean;
+}) {
+  const [amount, setAmount] = useState<number>(0);
+  return (
+    <AlertDialogContent>
+      <AlertDialogHeader>
+        <AlertDialogTitle>Cerrar caja</AlertDialogTitle>
+        <AlertDialogDescription>Contá el efectivo y registrá el monto.</AlertDialogDescription>
+      </AlertDialogHeader>
+      <div className="py-2">
+        <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(Number(e.target.value || 0))} />
+      </div>
+      <AlertDialogFooter>
+        <AlertDialogCancel>Cancelar</AlertDialogCancel>
+        <AlertDialogAction onClick={() => onConfirm(amount)} disabled={isLoading} data-testid="confirm-close-cash">
+          {isLoading ? "Cerrando…" : "Cerrar"}
+        </AlertDialogAction>
+      </AlertDialogFooter>
+    </AlertDialogContent>
+  );
+}
