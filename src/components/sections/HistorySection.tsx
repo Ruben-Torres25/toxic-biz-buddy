@@ -3,10 +3,13 @@ import * as React from "react";
 import { useMemo } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Landmark, RotateCcw, Banknote, Scale, History, Info } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Landmark, RotateCcw, Banknote, Scale, History, Info, Eye } from "lucide-react";
 import { LedgerAPI, type LedgerListResponse, type LedgerEntry } from "@/services/ledger.api";
+import { CashAPI, type MovementKind } from "@/services/cash.api";
 import { CustomerPicker, type CustomerOption } from "@/components/common/CustomerPicker";
 import { cn } from "@/lib/utils";
+import { CashDayDetailModal } from "@/components/modals/CashDayDetailModal";
 
 // ===== Helpers =====
 const moneyFmt = new Intl.NumberFormat("es-AR", {
@@ -58,7 +61,6 @@ function oneMsBefore(iso: string) {
 // === estilos para saldo (positivo = debe / negativo = a favor)
 function saldoToneClasses(n: number) {
   if (n > 0) {
-    // rojo suave + texto rojo
     return {
       text: "text-red-700 dark:text-red-400",
       bg: "bg-red-50 dark:bg-red-900/30",
@@ -67,7 +69,6 @@ function saldoToneClasses(n: number) {
     };
   }
   if (n < 0) {
-    // verde suave + texto verde
     return {
       text: "text-emerald-700 dark:text-emerald-400",
       bg: "bg-emerald-50 dark:bg-emerald-900/30",
@@ -155,6 +156,69 @@ export const HistorySection: React.FC = () => {
       };
     });
   }, [qPeriod.data, qOpening.data, customer?.id]);
+
+  // ===== Caja: usamos el historial (30 días) solo para agrupar por día y mostrar detalle =====
+  const qCash = useQuery({
+    queryKey: ["cash", "history", { days: 30 }],
+    queryFn: () => CashAPI.history(30),
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+  });
+
+  type Movement = {
+    id: string;
+    type: MovementKind;
+    description: string;
+    amount: number;
+    createdAt: string;
+    occurredAt?: string | null;
+  };
+
+  type DayBucket = {
+    dateKey: string;  // YYYY-MM-DD
+    label: string;    // LocalDate
+    movements: Movement[];
+  };
+
+  const cashGrouped = useMemo<DayBucket[]>(() => {
+    const arr: Movement[] = Array.isArray(qCash.data) ? qCash.data as any : [];
+    const map = new Map<string, Movement[]>();
+    for (const m of arr) {
+      const d = new Date(m.createdAt);
+      const key = d.toISOString().slice(0, 10);
+      const list = map.get(key) || [];
+      list.push(m);
+      map.set(key, list);
+    }
+    const out: DayBucket[] = Array.from(map.entries()).map(([key, list]) => {
+      const sorted = [...list].sort((a, b) => {
+        const ta = new Date(a.occurredAt || a.createdAt).getTime();
+        const tb = new Date(b.occurredAt || b.createdAt).getTime();
+        return ta - tb;
+      });
+      return { dateKey: key, label: new Date(key).toLocaleDateString(), movements: sorted };
+    });
+    // más reciente primero
+    out.sort((a, b) => (a.dateKey < b.dateKey ? 1 : -1));
+    return out;
+  }, [qCash.data]);
+
+  function dayTotals(movs: Movement[]) {
+    let openAmt = 0, closeAmt = 0, income = 0, expense = 0, sales = 0;
+    for (const m of movs) {
+      if (m.type === "open") openAmt = Number(m.amount || 0);
+      else if (m.type === "close") closeAmt = Number(m.amount || 0);
+      else if (m.type === "income") income += Number(m.amount || 0);
+      else if (m.type === "expense") expense += Math.abs(Number(m.amount || 0));
+      else if (m.type === "sale") sales += Number(m.amount || 0);
+    }
+    const saldoCalc = openAmt + income - expense + sales;
+    return { openAmt, closeAmt, income, expense, sales, saldoCalc };
+  }
+
+  const [cashDetailOpen, setCashDetailOpen] = React.useState(false);
+  const [cashDetailDay, setCashDetailDay] = React.useState<DayBucket | null>(null);
+  const openCashDetail = (day: DayBucket) => { setCashDetailDay(day); setCashDetailOpen(true); };
 
   return (
     <div className="space-y-6">
@@ -315,6 +379,69 @@ export const HistorySection: React.FC = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* 👇 ÚNICO bloque de caja: agrupado por día + ver detalle */}
+      <Card>
+        <CardHeader className="py-3">
+          <CardTitle className="text-base">Historial de Caja por día (últimos 30 días)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-md border">
+            <div className="grid grid-cols-12 text-xs text-muted-foreground px-3 py-2 border-b">
+              <div className="col-span-3">Fecha</div>
+              <div className="col-span-2 text-right">Ventas</div>
+              <div className="col-span-2 text-right">Ingresos</div>
+              <div className="col-span-2 text-right">Egresos</div>
+              <div className="col-span-2 text-right">Saldo calc.</div>
+              <div className="col-span-1 text-center">Detalle</div>
+            </div>
+
+            {cashGrouped.map((g) => {
+              const t = dayTotals(g.movements);
+              return (
+                <div key={g.dateKey} className="grid grid-cols-12 items-center px-3 py-2 border-b hover:bg-accent/30 text-sm">
+                  <div className="col-span-3">
+                    <div className="font-medium">{g.label}</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      Apertura: {moneyFmt.format(t.openAmt)} {t.closeAmt ? `· Cierre contado: ${moneyFmt.format(t.closeAmt)}` : ""}
+                    </div>
+                  </div>
+                  <div className="col-span-2 text-right tabular-nums">{moneyFmt.format(t.sales)}</div>
+                  <div className="col-span-2 text-right tabular-nums">{moneyFmt.format(t.income)}</div>
+                  <div className="col-span-2 text-right tabular-nums">-{moneyFmt.format(t.expense)}</div>
+                  <div className="col-span-2 text-right tabular-nums">{moneyFmt.format(t.saldoCalc)}</div>
+                  <div className="col-span-1 text-center">
+                    <Button size="icon" variant="outline" onClick={() => openCashDetail(g)} title="Ver detalle">
+                      <Eye className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {cashGrouped.length === 0 && (
+              <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+                Aún no hay movimientos de caja registrados.
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Modal de detalle por día */}
+      <CashDayDetailModal
+        open={cashDetailOpen}
+        onOpenChange={setCashDetailOpen}
+        dateLabel={cashDetailDay?.label || ""}
+        movements={(cashDetailDay?.movements || []).map(m => ({
+          id: (m as any).id,
+          type: (m as any).type as any,
+          amount: Number((m as any).amount || 0),
+          description: (m as any).description,
+          createdAt: (m as any).createdAt,
+          occurredAt: (m as any).occurredAt,
+        }))}
+      />
     </div>
   );
 };

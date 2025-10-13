@@ -1,10 +1,18 @@
 // src/services/cash.api.ts
 import { api } from "@/lib/api";
 
-export type MovementKind = "income" | "expense" | "sale";
-export type PaymentMethod = "cash" | "debit" | "credit" | "transfer";
+export type MovementKind = "open" | "close" | "income" | "expense" | "sale";
 
-export type CashSummary = {
+export type CashMovement = {
+  id: string;
+  createdAt: string;
+  occurredAt?: string | null;
+  amount: number;
+  type: MovementKind;
+  description: string;
+};
+
+export type CashCurrent = {
   date: string;
   openingAmount: number;
   closingAmount: number;
@@ -12,55 +20,22 @@ export type CashSummary = {
   totalExpense: number;
   totalSales: number;
   balance: number;
+  movements: CashMovement[];
   isOpen: boolean;
 };
 
-export type CheckoutItem = {
-  productId: string;
-  qty: number;
-  price?: number;
-  discount?: number; // descuento absoluto por unidad
-};
+export const CashAPI = {
+  current: async (): Promise<CashCurrent> => api.get("/cash/current"),
+  movements: async (): Promise<CashMovement[]> => api.get("/cash/movements"),
+  history: async (days = 14): Promise<CashMovement[]> =>
+    api.get("/cash/history", { days }),
 
-export type CheckoutPayment = {
-  method: PaymentMethod;
-  amount: number;
-};
+  open: async (amount: number) => api.post("/cash/open", { amount }),
+  close: async (amount: number) => api.post("/cash/close", { amount }),
 
-export type CheckoutPayload = {
-  items: CheckoutItem[];
-  payments: CheckoutPayment[];
-  discountGlobal?: number;
-  notes?: string;
-};
+  movement: async (p: { amount: number; type: Exclude<MovementKind, "open" | "close">; description: string }) =>
+    api.post("/cash/movement", p),
 
-export type CashMovementDTO = {
-  amount: number;
-  type: MovementKind;
-  description: string;
-  createdAt?: string;
+  // Compatibilidad
+  status: async (): Promise<{ isOpen: boolean }> => api.get("/cash/status"),
 };
-
-export class CashAPI {
-  static current(): Promise<CashSummary> {
-    return api.get<CashSummary>("/cash/current");
-  }
-  static open(openingAmount: number): Promise<CashSummary> {
-    return api.post<CashSummary>("/cash/open", { openingAmount });
-  }
-  static close(closingAmount: number): Promise<CashSummary> {
-    return api.post<CashSummary>("/cash/close", { closingAmount });
-  }
-  static movements() {
-    return api.get<any[]>("/cash/movements");
-  }
-  static history(days = 7) {
-    return api.get<any[]>("/cash/history", { days });
-  }
-  static movement(body: CashMovementDTO) {
-    return api.post("/cash/movement", body);
-  }
-  static checkout(payload: CheckoutPayload) {
-    return api.post("/cash/checkout", payload);
-  }
-}
