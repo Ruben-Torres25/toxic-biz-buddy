@@ -1,166 +1,212 @@
-// src/components/modals/CashDayDetailModal.tsx
 import * as React from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { Eye, Wallet, Landmark, Banknote, RotateCcw } from "lucide-react";
+import { SaleDetailModal } from "@/components/modals/SaleDetailModal";
 
-type MovementKind = "open" | "close" | "sale" | "income" | "expense";
+/** Tipos de movimiento admitidos por caja */
+type MovementKind = "open" | "close" | "income" | "expense" | "sale";
 
-export type CashMovement = {
+/** Entrada que recibimos para mostrar en el modal del día */
+export type CashDayMovement = {
   id: string;
+  type: MovementKind;
+  description?: string | null;
+  amount: number;
   createdAt: string;
   occurredAt?: string | null;
-  amount: number;
-  type: MovementKind;
-  description: string;
+
+  /** 👇 Debe venir en movimientos de tipo 'sale' */
+  saleId?: string | null;
+
+  /** Cliente (si aplica) */
+  customerId?: string | null;
+  customerName?: string | null;
+
+  /** Info opcional */
+  paymentsBreakdown?: Partial<Record<"cash" | "debit" | "credit" | "transfer", number>>;
+  itemsCount?: number;
 };
 
-const money = new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" });
+type Props = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  dateLabel: string; // "10/10/2025"
+  movements: CashDayMovement[];
+};
 
-function totals(movs: CashMovement[]) {
-  let openAmt = 0, closeAmt = 0, income = 0, expense = 0, sales = 0;
-  for (const m of movs) {
-    if (m.type === "open") openAmt = Number(m.amount || 0);
-    else if (m.type === "close") closeAmt = Number(m.amount || 0);
-    else if (m.type === "income") income += Number(m.amount || 0);
-    else if (m.type === "expense") expense += Math.abs(Number(m.amount || 0));
-    else if (m.type === "sale") sales += Number(m.amount || 0);
-  }
-  const saldoCalc = openAmt + income - expense + sales;
-  return { openAmt, closeAmt, income, expense, sales, saldoCalc };
+const moneyFmt = new Intl.NumberFormat("es-AR", {
+  style: "currency",
+  currency: "ARS",
+  maximumFractionDigits: 2,
+});
+
+function kindIcon(kind: MovementKind) {
+  if (kind === "open" || kind === "close") return Wallet;
+  if (kind === "sale") return Landmark;
+  if (kind === "income") return Banknote;
+  return RotateCcw; // expense
 }
 
-export function CashDayDetailModal({
+function kindLabel(kind: MovementKind) {
+  return kind === "open"
+    ? "Apertura"
+    : kind === "close"
+    ? "Cierre"
+    : kind === "sale"
+    ? "Venta"
+    : kind === "income"
+    ? "Ingreso"
+    : "Egreso";
+}
+
+export const CashDayDetailModal: React.FC<Props> = ({
   open,
   onOpenChange,
   dateLabel,
   movements,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  dateLabel: string;
-  movements: CashMovement[];
-}) {
-  const sorted = React.useMemo(() => {
-    return [...(movements || [])].sort((a, b) => {
-      const ta = new Date((a.occurredAt || a.createdAt) ?? a.createdAt).getTime();
-      const tb = new Date((b.occurredAt || b.createdAt) ?? b.createdAt).getTime();
-      return ta - tb;
-    });
+}) => {
+  // Modal de detalle de venta
+  const [saleModalOpen, setSaleModalOpen] = React.useState(false);
+  const [selectedSaleId, setSelectedSaleId] = React.useState<string | null>(null);
+
+  function openSaleDetailFor(m: CashDayMovement) {
+    if (m.type !== "sale" || !m.saleId) return;
+    setSelectedSaleId(m.saleId);
+    setSaleModalOpen(true);
+  }
+
+  // resumen cabecera
+  const { openAmt, closeAmt, sales, income, expense } = React.useMemo(() => {
+    let openAmt = 0, closeAmt = 0, income = 0, expense = 0, sales = 0;
+    for (const m of movements) {
+      if (m.type === "open") openAmt = Number(m.amount || 0);
+      else if (m.type === "close") closeAmt = Number(m.amount || 0);
+      else if (m.type === "income") income += Number(m.amount || 0);
+      else if (m.type === "expense") expense += Math.abs(Number(m.amount || 0));
+      else if (m.type === "sale") sales += Number(m.amount || 0);
+    }
+    return { openAmt, closeAmt, income, expense, sales };
   }, [movements]);
 
-  const T = totals(sorted);
-
-  const chip = (t: MovementKind) =>
-    t === "open"
-      ? <Badge variant="outline" className="border-blue-300 text-blue-700">Apertura</Badge>
-      : t === "close"
-      ? <Badge variant="outline" className="border-violet-300 text-violet-700">Cierre</Badge>
-      : t === "sale"
-      ? <Badge variant="outline" className="border-emerald-300 text-emerald-700">Venta</Badge>
-      : t === "income"
-      ? <Badge variant="outline" className="border-green-300 text-green-700">Ingreso</Badge>
-      : <Badge variant="outline" className="border-red-300 text-red-700">Egreso</Badge>;
-
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[96vw] sm:max-w-3xl p-0" aria-describedby={undefined}>
-        <DialogHeader className="px-6 pt-6">
-          <DialogTitle>Detalle de caja — {dateLabel}</DialogTitle>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="w-[96vw] sm:max-w-4xl md:max-w-5xl p-0" aria-describedby={undefined}>
+          <DialogHeader className="px-6 pt-6 pb-2">
+            <DialogTitle>Ventas y Movimientos — {dateLabel}</DialogTitle>
+          </DialogHeader>
 
-        {/* Resumen del día */}
-        <div className="px-6 pb-4">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <Card>
-              <CardContent className="py-3">
-                <div className="text-xs text-muted-foreground">Apertura</div>
-                <div className="text-lg font-semibold tabular-nums">{money.format(T.openAmt)}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="py-3">
-                <div className="text-xs text-muted-foreground">Ventas</div>
-                <div className="text-lg font-semibold tabular-nums">{money.format(T.sales)}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="py-3">
-                <div className="text-xs text-muted-foreground">Ingresos / Egresos</div>
-                <div className="text-lg font-semibold tabular-nums">
-                  {money.format(T.income)} <span className="text-muted-foreground">/</span> -{money.format(T.expense)}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-            <Card>
-              <CardContent className="py-3">
-                <div className="text-xs text-muted-foreground">Saldo calculado</div>
-                <div className="text-lg font-semibold tabular-nums">{money.format(T.saldoCalc)}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="py-3">
-                <div className="text-xs text-muted-foreground">Cierre (contado)</div>
-                <div className="text-lg font-semibold tabular-nums">{money.format(T.closeAmt)}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="py-3">
-                <div className="text-xs text-muted-foreground">Diferencia (contado - calc.)</div>
-                <div className={cn(
-                  "text-lg font-semibold tabular-nums",
-                  (T.closeAmt - T.saldoCalc) === 0 ? "text-muted-foreground" :
-                  (T.closeAmt - T.saldoCalc) > 0 ? "text-emerald-600" : "text-red-600"
-                )}>
-                  {money.format(T.closeAmt - T.saldoCalc)}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-
-        {/* Lista cronológica */}
-        <div className="px-6 pb-6">
-          <div className="rounded-md border">
-            <div className="grid grid-cols-12 text-xs text-muted-foreground px-3 py-2 border-b">
-              <div className="col-span-2">Hora</div>
-              <div className="col-span-2">Tipo</div>
-              <div className="col-span-6">Descripción</div>
-              <div className="col-span-2 text-right">Monto</div>
+          {/* resumen del día */}
+          <div className="px-6 pb-3">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-2 text-sm">
+              <InfoTile name="Apertura" value={moneyFmt.format(openAmt)} />
+              <InfoTile name="Ventas" value={moneyFmt.format(sales)} />
+              <InfoTile name="Ingresos" value={moneyFmt.format(income)} />
+              <InfoTile name="Egresos" value={moneyFmt.format(expense)} />
+              <InfoTile
+                name="Saldo calc."
+                value={moneyFmt.format(openAmt + sales + income - expense)}
+              />
+              <InfoTile
+                name="Cierre"
+                value={closeAmt ? moneyFmt.format(closeAmt) : "—"}
+              />
             </div>
-
-            <ScrollArea className="max-h-[50vh]">
-              {sorted.map((m) => {
-                const d = new Date(m.occurredAt || m.createdAt);
-                const hhmm = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-                const isExpense = m.type === "expense";
-                return (
-                  <div key={m.id} className="grid grid-cols-12 items-center px-3 py-2 border-b text-sm">
-                    <div className="col-span-2 tabular-nums">{hhmm}</div>
-                    <div className="col-span-2">{chip(m.type)}</div>
-                    <div className="col-span-6 truncate">{m.description || "—"}</div>
-                    <div className={cn("col-span-2 text-right tabular-nums font-medium",
-                      isExpense ? "text-destructive" : "text-foreground"
-                    )}>
-                      {isExpense ? `- ${money.format(Math.abs(m.amount))}` : money.format(m.amount)}
-                    </div>
-                  </div>
-                );
-              })}
-              {sorted.length === 0 && (
-                <div className="px-3 py-8 text-center text-sm text-muted-foreground">Sin movimientos.</div>
-              )}
-            </ScrollArea>
           </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+
+          {/* tabla */}
+          <div className="px-6 pb-6">
+            <div className="border rounded-md overflow-hidden">
+              <div className="grid grid-cols-12 text-xs text-muted-foreground px-3 py-2 border-b bg-muted/40">
+                <div className="col-span-2">Hora</div>
+                <div className="col-span-2">Tipo</div>
+                <div className="col-span-3 truncate">Descripción</div>
+                <div className="col-span-3 truncate">Cliente</div>
+                <div className="col-span-1 text-right">Monto</div>
+                <div className="col-span-1 text-center">Detalle</div>
+              </div>
+
+              <ScrollArea className="max-h-[55vh]">
+                {movements.map((m) => {
+                  const Icon = kindIcon(m.type);
+                  const date = new Date(m.occurredAt || m.createdAt);
+                  const hh = String(date.getHours()).padStart(2, "0");
+                  const mm = String(date.getMinutes()).padStart(2, "0");
+                  const isSale = m.type === "sale";
+                  const canOpen = isSale && !!m.saleId;
+
+                  return (
+                    <div key={m.id} className="grid grid-cols-12 items-center px-3 py-2 border-b hover:bg-accent/30 text-sm">
+                      <div className="col-span-2 tabular-nums">{hh}:{mm}</div>
+                      <div className="col-span-2 flex items-center gap-2">
+                        <Icon className={cn("w-4 h-4", isSale ? "text-emerald-600" : m.type === "income" ? "text-emerald-500" : m.type === "expense" ? "text-red-500" : "text-primary")} />
+                        <span>{kindLabel(m.type)}</span>
+                      </div>
+                      <div className="col-span-3 text-muted-foreground truncate">
+                        {m.description || "—"}
+                      </div>
+                      <div className="col-span-3 truncate">
+                        {m.customerName || "Consumidor final"}
+                      </div>
+                      <div className="col-span-1 text-right tabular-nums">
+                        {moneyFmt.format(Number(m.amount || 0))}
+                      </div>
+                      <div className="col-span-1 text-center">
+                        {isSale ? (
+                          <Button
+                            size="icon"
+                            variant="outline"
+                            onClick={() => openSaleDetailFor(m)}
+                            disabled={!canOpen}
+                            title={
+                              canOpen
+                                ? "Ver productos de la venta"
+                                : "Falta saleId en este movimiento (ajustá el backend)"
+                            }
+                          >
+                            <Eye className="w-4 h-4" />
+                          </Button>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {movements.length === 0 && (
+                  <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    No hay movimientos registrados en este día.
+                  </div>
+                )}
+              </ScrollArea>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de detalle de venta */}
+      <SaleDetailModal
+        open={saleModalOpen}
+        onOpenChange={setSaleModalOpen}
+        saleId={selectedSaleId}
+      />
+    </>
+  );
+};
+
+function InfoTile({ name, value }: { name: string; value: string }) {
+  return (
+    <div className="rounded-md border p-2 flex flex-col gap-1">
+      <span className="text-[11px] text-muted-foreground">{name}</span>
+      <span className="font-medium tabular-nums">{value}</span>
+    </div>
   );
 }
-
-export default CashDayDetailModal;

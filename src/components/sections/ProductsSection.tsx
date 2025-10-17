@@ -69,13 +69,13 @@ export const ProductsSection = () => {
   const [sortBy, setSortBy] = useState<'name' | 'sku' | 'price' | 'stock' | 'createdAt'>(initialSortBy);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(initialSortDir);
 
-  // Debounce para búsqueda
+  // Debounce búsqueda
   useEffect(() => {
     const t = setTimeout(() => setQ(qInput), 250);
     return () => clearTimeout(t);
   }, [qInput]);
 
-  // Sincronizar URL cuando cambian filtros
+  // Sincronizar URL
   useEffect(() => {
     const next = new URLSearchParams();
     if (q) next.set("q", q);
@@ -212,7 +212,7 @@ export const ProductsSection = () => {
             </div>
 
             <div className="flex items-center gap-2">
-              {/* Categoría: seleccionar existentes, con sentinela __ALL__ */}
+              {/* Categoría */}
               <div className="min-w-[220px]">
                 <Select
                   value={category ? category : "__ALL__"}
@@ -322,16 +322,20 @@ export const ProductsSection = () => {
             </div>
           ) : (
             <div className="overflow-auto">
-              {/* Colgroup para anchos consistentes */}
               <table className="w-full text-sm">
+                {/* FIX: colgroup sin nodos de texto (render desde array) */}
                 <colgroup>
-                  <col className="w-[140px]" /> {/* SKU */}
-                  <col />                        {/* Producto (flex) */}
-                  <col className="w-[180px]" />  {/* Categoría */}
-                  <col className="w-[140px]" />  {/* Precio */}
-                  <col className="w-[110px]" />  {/* Stock */}
-                  <col className="w-[110px]" />  {/* Disp. */}
-                  <col className="w-[160px]" />  {/* Acciones */}
+                  {[
+                    { key: 'sku', w: 140 },
+                    { key: 'name' },              // flexible
+                    { key: 'cat', w: 180 },
+                    { key: 'price', w: 140 },
+                    { key: 'stock', w: 110 },
+                    { key: 'avail', w: 110 },
+                    { key: 'actions', w: 160 },
+                  ].map(({ key, w }) => (
+                    <col key={key} style={w ? { width: `${w}px` } : undefined} />
+                  ))}
                 </colgroup>
 
                 <thead className="sticky top-0 bg-muted/50 backdrop-blur z-10">
