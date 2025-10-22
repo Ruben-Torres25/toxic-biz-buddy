@@ -1,6 +1,5 @@
-// src/components/sections/HistorySection.tsx
 import * as React from "react";
-import { useMemo } from "react";
+import { useMemo, useEffect } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +9,6 @@ import {
   Banknote,
   Scale,
   History,
-  Info,
   Eye,
 } from "lucide-react";
 import {
@@ -18,7 +16,11 @@ import {
   type LedgerListResponse,
   type LedgerEntry,
 } from "@/services/ledger.api";
-import { CashAPI, type MovementKind } from "@/services/cash.api";
+import {
+  CashAPI,
+  type CashDailyDay,
+  type MovementKind,
+} from "@/services/cash.api";
 import {
   CustomerPicker,
   type CustomerOption,
@@ -41,10 +43,7 @@ function monthRangeISO(d = new Date()) {
 }
 
 const sum = (ls?: number[]) =>
-  (ls ?? []).reduce(
-    (a, b) => a + (Number.isFinite(b) ? Number(b) : 0),
-    0
-  );
+  (ls ?? []).reduce((a, b) => a + (Number.isFinite(b) ? Number(b) : 0), 0);
 
 function typeLabel(t: LedgerEntry["type"]) {
   return t === "order"
@@ -62,8 +61,8 @@ function shortId(id?: string) {
 
 function sortAsc(items: LedgerEntry[]) {
   return [...items].sort((a, b) => {
-    const da = new Date(a.date).getTime();
-    const db = new Date(b.date).getTime();
+    const da = new Date((a as any).date ?? (a as any).createdAt ?? 0).getTime();
+    const db = new Date((b as any).date ?? (b as any).createdAt ?? 0).getTime();
     if (da !== db) return da - db;
     return a.id.localeCompare(b.id);
   });
@@ -99,10 +98,13 @@ function saldoToneClasses(n: number) {
   };
 }
 
+const PAGE_SIZE = 8;
+
 export const HistorySection: React.FC = () => {
   const { from, to } = useMemo(() => monthRangeISO(new Date()), []);
   const [customer, setCustomer] = React.useState<CustomerOption | null>(null);
 
+  // ===== Ledger KPIs =====
   const qOrders = useQuery<LedgerListResponse>({
     queryKey: ["ledger", "orders-month", { from, to, customerId: customer?.id ?? null }],
     queryFn: () =>
@@ -192,6 +194,7 @@ export const HistorySection: React.FC = () => {
   const loadingKPIs =
     qOrders.isFetching || qPayments.isFetching || qCN.isFetching;
 
+  // ===== Ledger rows con debe/haber/saldo =====
   const rows = useMemo(() => {
     const items = sortAsc(qPeriod.data?.items ?? []);
     const openingBalance = customer?.id
@@ -213,82 +216,52 @@ export const HistorySection: React.FC = () => {
     });
   }, [qPeriod.data, qOpening.data, customer?.id]);
 
-  // ========= Caja agrupada por día (para modal con botón "Ver")
-  const qCash = useQuery({
-    queryKey: ["cash", "history", { days: 30 }],
-    queryFn: () => CashAPI.history(30),
+  // ===== Paginar 8 filas (cliente-side)
+  const [page, setPage] = React.useState(1);
+  useEffect(() => {
+    setPage(1);
+  }, [customer?.id, qPeriod.data?.items?.length]);
+
+  const totalPages = Math.max(1, Math.ceil((rows?.length ?? 0) / PAGE_SIZE));
+  const startIdx = (page - 1) * PAGE_SIZE;
+  const endIdx = startIdx + PAGE_SIZE;
+  const pagedRows = rows.slice(startIdx, endIdx);
+  const rangeFrom = rows.length ? startIdx + 1 : 0;
+  const rangeTo = Math.min(rows.length, endIdx);
+
+  // ===== Caja AGRUPADA POR DÍA (usa /cash/daily)
+  const qDaily = useQuery<CashDailyDay[]>({
+    queryKey: ["cash", "daily", { days: 30 }],
+    queryFn: () => CashAPI.daily(30),
     placeholderData: keepPreviousData,
     staleTime: 60_000,
   });
 
-  type Movement = {
-    id: string;
-    type: MovementKind;
-    description: string;
-    amount: number;
-    createdAt: string;
-    occurredAt?: string | null;
-    saleId?: string | null;       // ⬅️ importante
-    customerName?: string | null; // opcional
-  };
+  // Formatea YYYY-MM-DD a dd/mm/aaaa en es-AR
+  function dayLabel(isoYMD: string) {
+    const [y, m, d] = isoYMD.split("-").map((x) => Number(x));
+    const date = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+    return date.toLocaleDateString("es-AR");
+  }
 
-  type DayBucket = {
-    dateKey: string;  // YYYY-MM-DD
-    label: string;    // LocalDate
-    movements: Movement[];
-  };
-
-  const cashGrouped = useMemo<DayBucket[]>(() => {
-    const arr: Movement[] = Array.isArray(qCash.data) ? (qCash.data as any) : [];
-    const map = new Map<string, Movement[]>();
-    for (const m of arr) {
-      const d = new Date(m.createdAt);
-      const key = d.toISOString().slice(0, 10);
-      const list = map.get(key) || [];
-      list.push(m);
-      map.set(key, list);
-    }
-    const out: DayBucket[] = Array.from(map.entries()).map(([key, list]) => {
-      const sorted = [...list].sort((a, b) => {
-        const ta = new Date(a.occurredAt || a.createdAt).getTime();
-        const tb = new Date(b.occurredAt || b.createdAt).getTime();
-        return ta - tb;
-      });
-      return {
-        dateKey: key,
-        label: new Date(key).toLocaleDateString(),
-        movements: sorted,
-      };
-    });
-    out.sort((a, b) => (a.dateKey < b.dateKey ? 1 : -1));
-    return out;
-  }, [qCash.data]);
-
-  function dayTotals(movs: Movement[]) {
-    let openAmt = 0,
-      closeAmt = 0,
-      income = 0,
-      expense = 0,
-      sales = 0;
-    for (const m of movs) {
-      if (m.type === "open") openAmt = Number(m.amount || 0);
-      else if (m.type === "close") closeAmt = Number(m.amount || 0);
-      else if (m.type === "income") income += Number(m.amount || 0);
-      else if (m.type === "expense") expense += Math.abs(Number(m.amount || 0));
-      else if (m.type === "sale") sales += Number(m.amount || 0);
-    }
+  function dayTotals(g: CashDailyDay) {
+    const openAmt = Number((g as any).openingAmount || 0);
+    const closeAmt = Number((g as any).closingAmount || 0);
+    const income = Number((g as any).income || 0);
+    const expense = Number((g as any).expense || 0);
+    const sales = Number((g as any).salesCash || 0);
     const saldoCalc = openAmt + income - expense + sales;
     return { openAmt, closeAmt, income, expense, sales, saldoCalc };
   }
 
   const [cashDetailOpen, setCashDetailOpen] = React.useState(false);
-  const [cashDetailDay, setCashDetailDay] = React.useState<DayBucket | null>(
-    null
-  );
-  const openCashDetail = (day: DayBucket) => {
+  const [cashDetailDay, setCashDetailDay] = React.useState<CashDailyDay | null>(null);
+  const openCashDetail = (day: CashDailyDay) => {
     setCashDetailDay(day);
     setCashDetailOpen(true);
   };
+
+  const showCustomerCol = !customer?.id; // mostrar “Cliente” solo en GENERAL
 
   return (
     <div className="space-y-6">
@@ -309,21 +282,9 @@ export const HistorySection: React.FC = () => {
 
       {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatsCard
-          title="Ventas (mes)"
-          value={loadingKPIs ? "…" : moneyFmt.format(ordersSum)}
-          icon={Landmark}
-        />
-        <StatsCard
-          title="Pagos (mes)"
-          value={loadingKPIs ? "…" : moneyFmt.format(paymentsSum)}
-          icon={Banknote}
-        />
-        <StatsCard
-          title="Notas de crédito (mes)"
-          value={loadingKPIs ? "…" : moneyFmt.format(cnSum)}
-          icon={RotateCcw}
-        />
+        <StatsCard title="Ventas (mes)" value={loadingKPIs ? "…" : moneyFmt.format(ordersSum)} icon={Landmark} />
+        <StatsCard title="Pagos (mes)"  value={loadingKPIs ? "…" : moneyFmt.format(paymentsSum)} icon={Banknote} />
+        <StatsCard title="Notas de crédito (mes)" value={loadingKPIs ? "…" : moneyFmt.format(cnSum)} icon={RotateCcw} />
         <StatsCard
           title={`Balance neto (${customer ? "cliente" : "mes"})`}
           value={loadingKPIs ? "…" : moneyFmt.format(netSum)}
@@ -337,9 +298,7 @@ export const HistorySection: React.FC = () => {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Landmark className="w-5 h-5 text-primary" />
-            {customer
-              ? "Cuenta corriente del cliente"
-              : "Movimientos recientes (general)"}
+            {customer ? "Cuenta corriente del cliente" : "Movimientos recientes (general)"}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -350,6 +309,7 @@ export const HistorySection: React.FC = () => {
                   <tr className="border-b">
                     <th className="text-left p-2">Fecha</th>
                     <th className="text-left p-2">Tipo</th>
+                    {showCustomerCol && <th className="text-left p-2">Cliente</th>}
                     <th className="text-left p-2">N°</th>
                     <th className="text-left p-2">Descripción</th>
                     <th className="text-right p-2">Debe</th>
@@ -361,8 +321,8 @@ export const HistorySection: React.FC = () => {
                 <tbody className="[&>tr:nth-child(even)]:bg-muted/20">
                   {customer?.id && (
                     <tr className="border-b">
-                      <td className="p-2 text-muted-foreground" colSpan={6}>
-                        Saldo inicial al {new Date(from).toLocaleDateString()}
+                      <td className="p-2 text-muted-foreground" colSpan={showCustomerCol ? 7 : 6}>
+                        Saldo inicial al {new Date(from).toLocaleDateString("es-AR")}
                       </td>
                       <td className="p-2 text-right">
                         {(() => {
@@ -377,12 +337,7 @@ export const HistorySection: React.FC = () => {
                                 tone.border
                               )}
                             >
-                              <span
-                                className={cn(
-                                  "h-1.5 w-1.5 rounded-full",
-                                  tone.dot
-                                )}
-                              />
+                              <span className={cn("h-1.5 w-1.5 rounded-full", tone.dot)} />
                               {moneyFmt.format(init)}
                             </span>
                           );
@@ -393,25 +348,26 @@ export const HistorySection: React.FC = () => {
 
                   {rows.length === 0 && (
                     <tr>
-                      <td
-                        colSpan={7}
-                        className="p-4 text-center text-muted-foreground"
-                      >
-                        {qPeriod.isFetching
-                          ? "Cargando..."
-                          : "Sin movimientos en el período"}
+                      <td colSpan={showCustomerCol ? 8 : 7} className="p-4 text-center text-muted-foreground">
+                        {qPeriod.isFetching ? "Cargando..." : "Sin movimientos en el período"}
                       </td>
                     </tr>
                   )}
 
-                  {rows.map((r) => {
-                    const tone = saldoToneClasses(r.saldo);
+                  {pagedRows.map((r) => {
+                    const tone = saldoToneClasses((r as any).saldo);
+                    const when = (r as any).date || (r as any).createdAt || "";
                     return (
                       <tr key={r.id} className="border-b last:border-b-0">
                         <td className="p-2 align-middle whitespace-nowrap">
-                          {new Date(r.date).toLocaleString()}
+                          {when ? new Date(when).toLocaleString("es-AR") : "—"}
                         </td>
                         <td className="p-2 align-middle">{typeLabel(r.type)}</td>
+                        {showCustomerCol && (
+                          <td className="p-2 align-middle">
+                            {(r as any).customerName ?? "—"}
+                          </td>
+                        )}
                         <td className="p-2 align-middle font-mono">
                           {shortId(r.sourceId)}
                         </td>
@@ -423,20 +379,18 @@ export const HistorySection: React.FC = () => {
                         <td
                           className={cn(
                             "p-2 align-middle text-right tabular-nums",
-                            r.debe ? "text-foreground" : "text-muted-foreground"
+                            (r as any).debe ? "text-foreground" : "text-muted-foreground"
                           )}
                         >
-                          {r.debe ? moneyFmt.format(r.debe) : "—"}
+                          {(r as any).debe ? moneyFmt.format((r as any).debe) : "—"}
                         </td>
                         <td
                           className={cn(
                             "p-2 align-middle text-right tabular-nums",
-                            r.haber
-                              ? "text-foreground"
-                              : "text-muted-foreground"
+                            (r as any).haber ? "text-foreground" : "text-muted-foreground"
                           )}
                         >
-                          {r.haber ? moneyFmt.format(r.haber) : "—"}
+                          {(r as any).haber ? moneyFmt.format((r as any).haber) : "—"}
                         </td>
                         <td className="p-2 align-middle text-right">
                           <span
@@ -447,13 +401,8 @@ export const HistorySection: React.FC = () => {
                               tone.border
                             )}
                           >
-                            <span
-                              className={cn(
-                                "h-1.5 w-1.5 rounded-full",
-                                tone.dot
-                              )}
-                            />
-                            {moneyFmt.format(r.saldo)}
+                            <span className={cn("h-1.5 w-1.5 rounded-full", tone.dot)} />
+                            {moneyFmt.format((r as any).saldo)}
                           </span>
                         </td>
                       </tr>
@@ -462,11 +411,27 @@ export const HistorySection: React.FC = () => {
                 </tbody>
               </table>
             </div>
+
+            {/* Paginador */}
+            <div className="flex items-center justify-between px-3 py-2 border-t bg-background/70">
+              <div className="text-xs text-muted-foreground">
+                {rows.length
+                  ? `Mostrando ${rangeFrom}–${rangeTo} de ${rows.length}`
+                  : "Sin resultados"}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => setPage(1)} disabled={page <= 1}>«</Button>
+                <Button size="sm" variant="outline" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>Anterior</Button>
+                <span className="text-sm tabular-nums">{page} / {totalPages}</span>
+                <Button size="sm" variant="outline" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Siguiente</Button>
+                <Button size="sm" variant="outline" onClick={() => setPage(totalPages)} disabled={page >= totalPages}>»</Button>
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Caja por día + botón para abrir el modal con "Ver" por cada venta */}
+      {/* Caja por día (usa /cash/daily) */}
       <Card>
         <CardHeader className="py-3">
           <CardTitle className="text-base">
@@ -484,20 +449,18 @@ export const HistorySection: React.FC = () => {
               <div className="col-span-1 text-center">Detalle</div>
             </div>
 
-            {cashGrouped.map((g) => {
-              const t = dayTotals(g.movements);
+            {(qDaily.data ?? []).map((g) => {
+              const t = dayTotals(g);
               return (
                 <div
-                  key={g.dateKey}
+                  key={(g as any).date}
                   className="grid grid-cols-12 items-center px-3 py-2 border-b hover:bg-accent/30 text-sm"
                 >
                   <div className="col-span-3">
-                    <div className="font-medium">{g.label}</div>
+                    <div className="font-medium">{dayLabel((g as any).date)}</div>
                     <div className="text-[11px] text-muted-foreground">
                       Apertura: {moneyFmt.format(t.openAmt)}{" "}
-                      {t.closeAmt
-                        ? `· Cierre contado: ${moneyFmt.format(t.closeAmt)}`
-                        : ""}
+                      {t.closeAmt ? `· Cierre contado: ${moneyFmt.format(t.closeAmt)}` : ""}
                     </div>
                   </div>
                   <div className="col-span-2 text-right tabular-nums">
@@ -526,29 +489,29 @@ export const HistorySection: React.FC = () => {
               );
             })}
 
-            {cashGrouped.length === 0 && (
+            {(qDaily.data ?? []).length === 0 && (
               <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-                Aún no hay movimientos de caja registrados.
+                {qDaily.isFetching ? "Cargando..." : "Aún no hay movimientos de caja registrados."}
               </div>
             )}
           </div>
         </CardContent>
       </Card>
 
-      {/* Modal de detalle por día (incluye botón Ver en cada venta) */}
+      {/* Modal de detalle del día */}
       <CashDayDetailModal
         open={cashDetailOpen}
         onOpenChange={setCashDetailOpen}
-        dateLabel={cashDetailDay?.label || ""}
-        movements={(cashDetailDay?.movements || []).map((m) => ({
-          id: (m as any).id,
-          type: (m as any).type as any,
-          amount: Number((m as any).amount || 0),
-          description: (m as any).description,
-          createdAt: (m as any).createdAt,
-          occurredAt: (m as any).occurredAt,
-          saleId: (m as any).saleId,             // ⬅️ pasamos saleId si viene
-          customerName: (m as any).customerName, // opcional
+        dateLabel={cashDetailDay ? dayLabel((cashDetailDay as any).date) : ""}
+        movements={((cashDetailDay as any)?.details || []).map((m: any) => ({
+          id: m.id,
+          type: m.type as MovementKind,
+          amount: Number(m.amount || 0),
+          description: m.description,
+          createdAt: m.createdAt,
+          occurredAt: m.occurredAt,
+          saleId: m.saleId,
+          customerName: m.customerName,
         }))}
       />
     </div>

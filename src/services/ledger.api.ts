@@ -14,7 +14,9 @@ export type LedgerFilters = {
 export type LedgerEntry = {
   id: string;
   customerId: string | null;
+  customerName?: string | null; // 👈 NUEVO
   date: string;
+  createdAt?: string;           // opcional para fallback
   type: 'order' | 'payment' | 'credit_note' | 'adjustment';
   sourceType: 'order' | 'payment' | 'credit_note';
   sourceId: string;
@@ -33,7 +35,6 @@ export type LedgerListResponse = {
 
 export const LedgerAPI = {
   async list(filters: LedgerFilters = {}): Promise<LedgerListResponse> {
-    // usa tu Api.get que ya arma la base URL correcta
     return api.get<LedgerListResponse>('/ledger', filters);
   },
 };

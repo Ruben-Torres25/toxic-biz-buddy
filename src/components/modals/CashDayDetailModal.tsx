@@ -23,7 +23,7 @@ export type CashDayMovement = {
   createdAt: string;
   occurredAt?: string | null;
 
-  /** 👇 Debe venir en movimientos de tipo 'sale' */
+  /** 👇 Debe venir en movimientos de tipo 'sale' (id de movimiento) */
   saleId?: string | null;
 
   /** Cliente (si aplica) */
