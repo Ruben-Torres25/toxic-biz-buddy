@@ -11,6 +11,9 @@ export interface Product {
   // 🔎 Campos opcionales para el buscador
   category?: string | null;
   barcode?: string | null;
+
+  // 👇 NUEVO
+  minStock?: number | null;
 }
 
 // Clientes
@@ -21,27 +24,25 @@ export interface Customer {
   email?: string;
   balance: number;
 
-  // extras opcionales que usa la UI
   phone2?: string;
   address?: string;
   postalCode?: string;
   notes?: string;
   createdAt?: string | Date;
 
-  // ===== Datos fiscales (opcionales) =====
-  businessName?: string;                    // Razón social
-  cuit?: string;                            // CUIT/CUIL (con o sin guiones)
-  vatStatus?: 'RI' | 'MONO' | 'EXENTO' | 'CF'; // Condición frente al IVA
-  iibb?: string;                            // Ingresos Brutos
-  fiscalAddress?: string;                   // Domicilio fiscal
-  afipCode?: string;                        // Actividad / Código AFIP
-  taxNotes?: string;                        // Observaciones fiscales
+  businessName?: string;
+  cuit?: string;
+  vatStatus?: 'RI' | 'MONO' | 'EXENTO' | 'CF';
+  iibb?: string;
+  fiscalAddress?: string;
+  afipCode?: string;
+  taxNotes?: string;
 }
 
 // Historial de movimientos
 export interface CustomerMovement {
   id: string;
-  amount: number | string; // backend puede enviarlo string decimal
+  amount: number | string;
   type: "payment" | "debt" | "adjust";
   reason?: string | null;
   createdAt: string | Date;
@@ -54,14 +55,13 @@ export interface OrderItemDTO {
   unitPrice: number;
   quantity: number;
   discount?: number;
-  /** Cantidad devuelta acumulada (se actualiza con notas de crédito) */
-  returnedQty?: number; // 👈 NUEVO
+  returnedQty?: number;
 }
 
 export interface OrderDTO {
   id: string;
   code: string | null;
-  status: "pending" | "confirmed" | "canceled" | "partially_returned" | "returned"; // ⬅️ agregado
+  status: "pending" | "confirmed" | "canceled" | "partially_returned" | "returned";
   total: number;
   notes?: string;
   customer?: Customer;

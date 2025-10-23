@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 export type EditProductModalProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  product?: (Partial<Product> & { minStock?: number; supplier?: string }) | null;
+  product?: (Partial<Product> & { supplier?: string }) | null;
   onSave?: (p?: any) => void;
 };
 
@@ -26,7 +26,7 @@ export function EditProductModal({ open, onOpenChange, product, onSave }: EditPr
     category: "",
     barcode: "",
     price: "",
-    stock: "",
+    // stock: NO editable
     minStock: "",
     supplier: "",
   });
@@ -38,13 +38,12 @@ export function EditProductModal({ open, onOpenChange, product, onSave }: EditPr
         category: p.category ?? "",
         barcode: p.barcode ?? "",
         price: p.price != null ? String(p.price) : "",
-        stock: p.stock != null ? String(p.stock) : "",
         minStock: p.minStock != null ? String(p.minStock) : "",
-        supplier: p.supplier ?? "",
+        supplier: (p as any).supplier ?? "",
       });
     }
     if (open && !p) {
-      setForm({ name: "", category: "", barcode: "", price: "", stock: "", minStock: "", supplier: "" });
+      setForm({ name: "", category: "", barcode: "", price: "", minStock: "", supplier: "" });
     }
   }, [open, p?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -56,8 +55,14 @@ export function EditProductModal({ open, onOpenChange, product, onSave }: EditPr
         category: form.category.trim() || undefined,
         barcode: form.barcode.trim() || undefined,
         price: form.price !== "" ? Number(form.price) : undefined,
-        stock: form.stock !== "" ? Number(form.stock) : undefined,
       };
+      if (form.minStock.trim() !== "") {
+        payload.minStock = Number.isNaN(Number(form.minStock))
+          ? undefined
+          : Math.max(0, Math.trunc(Number(form.minStock)));
+      } else {
+        payload.minStock = null; // limpiar si lo vacían
+      }
       return ProductsAPI.update(p.id, payload);
     },
     onSuccess: (saved) => {
@@ -74,7 +79,7 @@ export function EditProductModal({ open, onOpenChange, product, onSave }: EditPr
   const canSave =
     form.name.trim().length > 0 &&
     (form.price === "" || (!Number.isNaN(Number(form.price)) && Number(form.price) >= 0)) &&
-    (form.stock === "" || (Number.isInteger(Number(form.stock)) && Number(form.stock) >= 0));
+    (form.minStock === "" || (Number.isInteger(Number(form.minStock)) && Number(form.minStock) >= 0));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -130,23 +135,19 @@ export function EditProductModal({ open, onOpenChange, product, onSave }: EditPr
                   onChange={(e) => setForm(f => ({ ...f, price: e.target.value }))}
                 />
               </div>
+
               <div>
-                <Label>Stock</Label>
+                <Label>Stock mínimo (opcional)</Label>
                 <Input
                   type="number"
                   step="1"
-                  value={form.stock}
-                  onChange={(e) => setForm(f => ({ ...f, stock: e.target.value }))}
+                  value={form.minStock}
+                  onChange={(e) => setForm(f => ({ ...f, minStock: e.target.value }))}
                 />
               </div>
             </div>
 
-            {/* Opcionales locales */}
             <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Stock mínimo (opcional)</Label>
-                <Input value={form.minStock} onChange={(e) => setForm(f => ({ ...f, minStock: e.target.value }))} />
-              </div>
               <div>
                 <Label>Proveedor (opcional)</Label>
                 <Input value={form.supplier} onChange={(e) => setForm(f => ({ ...f, supplier: e.target.value }))} />

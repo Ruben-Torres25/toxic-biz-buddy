@@ -194,8 +194,8 @@ export const HistorySection: React.FC = () => {
   const loadingKPIs =
     qOrders.isFetching || qPayments.isFetching || qCN.isFetching;
 
-  // ===== Ledger rows con debe/haber/saldo =====
-  const rows = useMemo(() => {
+  // ===== Ledger rows con debe/haber/saldo (ASC para calcular saldo), luego invertimos para mostrar recientes primero
+  const rowsAsc = useMemo(() => {
     const items = sortAsc(qPeriod.data?.items ?? []);
     const openingBalance = customer?.id
       ? Number(qOpening.data?.balance ?? 0)
@@ -216,20 +216,24 @@ export const HistorySection: React.FC = () => {
     });
   }, [qPeriod.data, qOpening.data, customer?.id]);
 
-  // ===== Paginar 8 filas (cliente-side)
-  const [page, setPage] = React.useState(1);
+  // ===== Mostrar más recientes primero
+  const rowsDesc = useMemo(() => [...rowsAsc].reverse(), [rowsAsc]);
+
+  // ===== Paginar 8 filas (cliente-side) sobre orden DESC
+  const [ledgerPage, setLedgerPage] = React.useState(1);
   useEffect(() => {
-    setPage(1);
-  }, [customer?.id, qPeriod.data?.items?.length]);
+    setLedgerPage(1); // reset al cambiar cliente/dataset
+  }, [customer?.id, rowsDesc.length]);
 
-  const totalPages = Math.max(1, Math.ceil((rows?.length ?? 0) / PAGE_SIZE));
-  const startIdx = (page - 1) * PAGE_SIZE;
-  const endIdx = startIdx + PAGE_SIZE;
-  const pagedRows = rows.slice(startIdx, endIdx);
-  const rangeFrom = rows.length ? startIdx + 1 : 0;
-  const rangeTo = Math.min(rows.length, endIdx);
+  const ledgerTotal = rowsDesc.length;
+  const ledgerTotalPages = Math.max(1, Math.ceil(ledgerTotal / PAGE_SIZE));
+  const ledgerStartIdx = (ledgerPage - 1) * PAGE_SIZE;
+  const ledgerEndIdx = ledgerStartIdx + PAGE_SIZE;
+  const ledgerPaged = rowsDesc.slice(ledgerStartIdx, ledgerEndIdx);
+  const ledgerRangeFrom = ledgerTotal ? ledgerStartIdx + 1 : 0;
+  const ledgerRangeTo = Math.min(ledgerTotal, ledgerEndIdx);
 
-  // ===== Caja AGRUPADA POR DÍA (usa /cash/daily)
+  // ===== Caja AGRUPADA POR DÍA (usa /cash/daily) → paginar a 8 y mostrar días recientes primero
   const qDaily = useQuery<CashDailyDay[]>({
     queryKey: ["cash", "daily", { days: 30 }],
     queryFn: () => CashAPI.daily(30),
@@ -237,7 +241,7 @@ export const HistorySection: React.FC = () => {
     staleTime: 60_000,
   });
 
-  // Formatea YYYY-MM-DD a dd/mm/aaaa en es-AR
+  // dd/mm/aaaa
   function dayLabel(isoYMD: string) {
     const [y, m, d] = isoYMD.split("-").map((x) => Number(x));
     const date = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
@@ -253,6 +257,24 @@ export const HistorySection: React.FC = () => {
     const saldoCalc = openAmt + income - expense + sales;
     return { openAmt, closeAmt, income, expense, sales, saldoCalc };
   }
+
+  const daysDesc = useMemo(
+    () => [...(qDaily.data ?? [])].sort((a, b) => (a.date < b.date ? 1 : -1)),
+    [qDaily.data]
+  );
+
+  const [cashPage, setCashPage] = React.useState(1);
+  useEffect(() => {
+    setCashPage(1); // reset al cambiar dataset
+  }, [daysDesc.length]);
+
+  const cashTotal = daysDesc.length;
+  const cashTotalPages = Math.max(1, Math.ceil(cashTotal / PAGE_SIZE));
+  const cashStartIdx = (cashPage - 1) * PAGE_SIZE;
+  const cashEndIdx = cashStartIdx + PAGE_SIZE;
+  const cashPaged = daysDesc.slice(cashStartIdx, cashEndIdx);
+  const cashRangeFrom = cashTotal ? cashStartIdx + 1 : 0;
+  const cashRangeTo = Math.min(cashTotal, cashEndIdx);
 
   const [cashDetailOpen, setCashDetailOpen] = React.useState(false);
   const [cashDetailDay, setCashDetailDay] = React.useState<CashDailyDay | null>(null);
@@ -293,7 +315,7 @@ export const HistorySection: React.FC = () => {
         />
       </div>
 
-      {/* Tabla Debe / Haber / Saldo */}
+      {/* Tabla Debe / Haber / Saldo (recientes primero) */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -346,7 +368,7 @@ export const HistorySection: React.FC = () => {
                     </tr>
                   )}
 
-                  {rows.length === 0 && (
+                  {rowsDesc.length === 0 && (
                     <tr>
                       <td colSpan={showCustomerCol ? 8 : 7} className="p-4 text-center text-muted-foreground">
                         {qPeriod.isFetching ? "Cargando..." : "Sin movimientos en el período"}
@@ -354,7 +376,7 @@ export const HistorySection: React.FC = () => {
                     </tr>
                   )}
 
-                  {pagedRows.map((r) => {
+                  {ledgerPaged.map((r) => {
                     const tone = saldoToneClasses((r as any).saldo);
                     const when = (r as any).date || (r as any).createdAt || "";
                     return (
@@ -412,26 +434,26 @@ export const HistorySection: React.FC = () => {
               </table>
             </div>
 
-            {/* Paginador */}
+            {/* Paginador (ledger, DESC) */}
             <div className="flex items-center justify-between px-3 py-2 border-t bg-background/70">
               <div className="text-xs text-muted-foreground">
-                {rows.length
-                  ? `Mostrando ${rangeFrom}–${rangeTo} de ${rows.length}`
+                {ledgerTotal
+                  ? `Mostrando ${ledgerRangeFrom}–${ledgerRangeTo} de ${ledgerTotal}`
                   : "Sin resultados"}
               </div>
               <div className="flex items-center gap-2">
-                <Button size="sm" variant="outline" onClick={() => setPage(1)} disabled={page <= 1}>«</Button>
-                <Button size="sm" variant="outline" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>Anterior</Button>
-                <span className="text-sm tabular-nums">{page} / {totalPages}</span>
-                <Button size="sm" variant="outline" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Siguiente</Button>
-                <Button size="sm" variant="outline" onClick={() => setPage(totalPages)} disabled={page >= totalPages}>»</Button>
+                <Button size="sm" variant="outline" onClick={() => setLedgerPage(1)} disabled={ledgerPage <= 1}>«</Button>
+                <Button size="sm" variant="outline" onClick={() => setLedgerPage((p) => Math.max(1, p - 1))} disabled={ledgerPage <= 1}>Anterior</Button>
+                <span className="text-sm tabular-nums">{ledgerPage} / {ledgerTotalPages}</span>
+                <Button size="sm" variant="outline" onClick={() => setLedgerPage((p) => Math.min(ledgerTotalPages, p + 1))} disabled={ledgerPage >= ledgerTotalPages}>Siguiente</Button>
+                <Button size="sm" variant="outline" onClick={() => setLedgerPage(ledgerTotalPages)} disabled={ledgerPage >= ledgerTotalPages}>»</Button>
               </div>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Caja por día (usa /cash/daily) */}
+      {/* Caja por día (usa /cash/daily) → DESC + 8 por página */}
       <Card>
         <CardHeader className="py-3">
           <CardTitle className="text-base">
@@ -449,15 +471,15 @@ export const HistorySection: React.FC = () => {
               <div className="col-span-1 text-center">Detalle</div>
             </div>
 
-            {(qDaily.data ?? []).map((g) => {
+            {cashPaged.map((g) => {
               const t = dayTotals(g);
               return (
                 <div
-                  key={(g as any).date}
+                  key={g.date}
                   className="grid grid-cols-12 items-center px-3 py-2 border-b hover:bg-accent/30 text-sm"
                 >
                   <div className="col-span-3">
-                    <div className="font-medium">{dayLabel((g as any).date)}</div>
+                    <div className="font-medium">{dayLabel(g.date)}</div>
                     <div className="text-[11px] text-muted-foreground">
                       Apertura: {moneyFmt.format(t.openAmt)}{" "}
                       {t.closeAmt ? `· Cierre contado: ${moneyFmt.format(t.closeAmt)}` : ""}
@@ -489,30 +511,48 @@ export const HistorySection: React.FC = () => {
               );
             })}
 
-            {(qDaily.data ?? []).length === 0 && (
+            {cashTotal === 0 && (
               <div className="px-3 py-8 text-center text-sm text-muted-foreground">
                 {qDaily.isFetching ? "Cargando..." : "Aún no hay movimientos de caja registrados."}
+              </div>
+            )}
+
+            {/* Paginador (caja por día, DESC) */}
+            {cashTotal > 0 && (
+              <div className="flex items-center justify-between px-3 py-2 border-t bg-background/70">
+                <div className="text-xs text-muted-foreground">
+                  {`Mostrando ${cashRangeFrom}–${cashRangeTo} de ${cashTotal}`}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setCashPage(1)} disabled={cashPage <= 1}>«</Button>
+                  <Button size="sm" variant="outline" onClick={() => setCashPage((p) => Math.max(1, p - 1))} disabled={cashPage <= 1}>Anterior</Button>
+                  <span className="text-sm tabular-nums">{cashPage} / {cashTotalPages}</span>
+                  <Button size="sm" variant="outline" onClick={() => setCashPage((p) => Math.min(cashTotalPages, p + 1))} disabled={cashPage >= cashTotalPages}>Siguiente</Button>
+                  <Button size="sm" variant="outline" onClick={() => setCashPage(cashTotalPages)} disabled={cashPage >= cashTotalPages}>»</Button>
+                </div>
               </div>
             )}
           </div>
         </CardContent>
       </Card>
 
-      {/* Modal de detalle del día */}
+      {/* Modal de detalle del día: pasa g.details (si tu backend las expone) */}
       <CashDayDetailModal
         open={cashDetailOpen}
         onOpenChange={setCashDetailOpen}
-        dateLabel={cashDetailDay ? dayLabel((cashDetailDay as any).date) : ""}
-        movements={((cashDetailDay as any)?.details || []).map((m: any) => ({
-          id: m.id,
-          type: m.type as MovementKind,
-          amount: Number(m.amount || 0),
-          description: m.description,
-          createdAt: m.createdAt,
-          occurredAt: m.occurredAt,
-          saleId: m.saleId,
-          customerName: m.customerName,
-        }))}
+        dateLabel={cashDetailDay ? dayLabel(cashDetailDay.date) : ""}
+        movements={(cashDetailDay as any)?.details
+          ? (cashDetailDay as any).details.map((m: any) => ({
+              id: m.id,
+              type: m.type as MovementKind,
+              amount: Number(m.amount || 0),
+              description: m.description,
+              createdAt: m.createdAt,
+              occurredAt: m.occurredAt,
+              saleId: m.saleId,
+              customerName: m.customerName,
+            }))
+          : []}
       />
     </div>
   );

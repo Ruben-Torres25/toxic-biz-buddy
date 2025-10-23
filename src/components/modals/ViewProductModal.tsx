@@ -6,7 +6,7 @@ import type { Product } from "@/types/domain";
 export type ViewProductModalProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  product?: (Partial<Product> & { minStock?: number; supplier?: string }) | null;
+  product?: (Partial<Product> & { supplier?: string }) | null;
 };
 
 export function ViewProductModal({ open, onOpenChange, product }: ViewProductModalProps) {
@@ -57,7 +57,7 @@ export function ViewProductModal({ open, onOpenChange, product }: ViewProductMod
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground">Disponible</Label>
-                <div>{Math.max(0, Number(p.available ?? ((p.stock ?? 0) - (p.reserved ?? 0))))}</div>
+                <div>{Math.max(0, Number(p.available ?? ((Number(p.stock ?? 0) - Number(p.reserved ?? 0)))))}</div>
               </div>
             </div>
 
@@ -68,7 +68,7 @@ export function ViewProductModal({ open, onOpenChange, product }: ViewProductMod
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground">Proveedor (opcional)</Label>
-                <div>{p.supplier ?? "—"}</div>
+                <div>{(p as any).supplier ?? "—"}</div>
               </div>
             </div>
           </div>

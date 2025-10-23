@@ -34,12 +34,12 @@ export function NewProductModal({ open, onOpenChange }: Props) {
     barcode: "",
     price: "",
     stock: "",
+    minStock: "", // 👈 NUEVO
   });
 
   const [nextSku, setNextSku] = useState<string>("");
   const [catModal, setCatModal] = useState(false);
 
-  // Categorías desde localStorage, con descubrimiento inicial del backend
   const { data: categories = [] } = useQuery({
     queryKey: ["categories"],
     queryFn: () => CategoriesRepo.list(),
@@ -56,19 +56,25 @@ export function NewProductModal({ open, onOpenChange }: Props) {
   }, []);
 
   const createMutation = useMutation({
-    mutationFn: () =>
-      ProductsAPI.create({
+    mutationFn: () => {
+      const payload: any = {
         name: form.name.trim(),
         category: form.category.trim() || undefined,
         barcode: form.barcode.trim() || undefined,
         price: Number(form.price),
-        stock: Number(form.stock),
-      }),
+        stock: Number(form.stock), // stock inicial
+      };
+      // minStock opcional
+      if (form.minStock.trim() !== "" && Number.isInteger(Number(form.minStock)) && Number(form.minStock) >= 0) {
+        payload.minStock = Number(form.minStock);
+      }
+      return ProductsAPI.create(payload);
+    },
     onSuccess: () => {
       toast({ title: "Producto agregado", description: "Se registró correctamente." });
       qc.invalidateQueries({ queryKey: ["products"] });
       onOpenChange(false);
-      setForm({ name: "", category: "", barcode: "", price: "", stock: "" });
+      setForm({ name: "", category: "", barcode: "", price: "", stock: "", minStock: "" });
       setNextSku("");
     },
     onError: (e: any) => {
@@ -79,12 +85,17 @@ export function NewProductModal({ open, onOpenChange }: Props) {
   function canSave() {
     const price = Number(form.price);
     const stock = Number(form.stock);
+    const minStockOk =
+      form.minStock === "" ||
+      (Number.isInteger(Number(form.minStock)) && Number(form.minStock) >= 0);
+
     return (
       form.name.trim().length > 0 &&
       Number.isFinite(price) &&
       price >= 0 &&
       Number.isInteger(stock) &&
-      stock >= 0
+      stock >= 0 &&
+      minStockOk
     );
   }
 
@@ -145,7 +156,7 @@ export function NewProductModal({ open, onOpenChange }: Props) {
                       <div className="px-3 py-2 text-sm text-muted-foreground">Sin categorías</div>
                     ) : (
                       categories
-                        .filter((c) => !!c && c.trim().length > 0) // evita vacíos
+                        .filter((c) => !!c && c.trim().length > 0)
                         .map((c) => (
                           <SelectItem key={c} value={c}>
                             {c}
@@ -174,7 +185,7 @@ export function NewProductModal({ open, onOpenChange }: Props) {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <Label>Precio</Label>
               <Input
@@ -186,13 +197,23 @@ export function NewProductModal({ open, onOpenChange }: Props) {
               />
             </div>
             <div>
-              <Label>Stock</Label>
+              <Label>Stock inicial</Label>
               <Input
                 type="number"
                 step="1"
                 value={form.stock}
                 onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))}
                 placeholder="50"
+              />
+            </div>
+            <div>
+              <Label>Stock mínimo (opcional)</Label>
+              <Input
+                type="number"
+                step="1"
+                value={form.minStock}
+                onChange={(e) => setForm((f) => ({ ...f, minStock: e.target.value }))}
+                placeholder="10"
               />
             </div>
           </div>
@@ -207,7 +228,6 @@ export function NewProductModal({ open, onOpenChange }: Props) {
           </Button>
         </DialogFooter>
 
-        {/* Modal de gestión de categorías */}
         <ManageCategoriesModal open={catModal} onOpenChange={setCatModal} />
       </DialogContent>
     </Dialog>
