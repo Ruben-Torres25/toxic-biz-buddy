@@ -1,134 +1,78 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { Package, AlertTriangle, CheckCircle, Tag, FolderOpen, DollarSign, Archive, Truck } from "lucide-react";
+import type { Product } from "@/types/domain";
 
-interface Product {
-  id: string;
-  name: string;
-  category: string;
-  price: number;
-  stock: number;
-  minStock: number;
-  supplier: string;
-}
-
-interface ViewProductModalProps {
+export type ViewProductModalProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  product: Product | null;
-}
+  product?: (Partial<Product> & { supplier?: string }) | null;
+};
 
 export function ViewProductModal({ open, onOpenChange, product }: ViewProductModalProps) {
-  if (!product) return null;
-
-  const getStockStatus = () => {
-    if (product.stock === 0) {
-      return <Badge className="bg-destructive/10 text-destructive border-destructive/20">
-        <AlertTriangle className="w-3 h-3 mr-1" />Sin Stock
-      </Badge>;
-    } else if (product.stock <= product.minStock) {
-      return <Badge className="bg-warning/10 text-warning border-warning/20">
-        <AlertTriangle className="w-3 h-3 mr-1" />Stock Bajo
-      </Badge>;
-    } else {
-      return <Badge className="bg-success/10 text-success border-success/20">
-        <CheckCircle className="w-3 h-3 mr-1" />Disponible
-      </Badge>;
-    }
-  };
+  const p = product ?? undefined;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-xl font-semibold">
-            <div className="p-2 bg-primary/10 rounded-lg">
-              <Package className="w-5 h-5 text-primary" />
-            </div>
-            Detalles del Producto
-          </DialogTitle>
+          <DialogTitle>Detalle de producto</DialogTitle>
         </DialogHeader>
-        
-        <div className="space-y-6">
-          {/* Información Principal */}
-          <div className="space-y-4">
-            <div className="flex items-start gap-3">
-              <Tag className="w-4 h-4 text-muted-foreground mt-0.5" />
-              <div className="flex-1">
-                <p className="text-sm text-muted-foreground mb-1">Código</p>
-                <p className="font-semibold">{product.id}</p>
-              </div>
-            </div>
 
-            <div className="flex items-start gap-3">
-              <Package className="w-4 h-4 text-muted-foreground mt-0.5" />
-              <div className="flex-1">
-                <p className="text-sm text-muted-foreground mb-1">Nombre</p>
-                <p className="font-semibold">{product.name}</p>
-              </div>
-            </div>
-
-            <div className="flex items-start gap-3">
-              <FolderOpen className="w-4 h-4 text-muted-foreground mt-0.5" />
-              <div className="flex-1">
-                <p className="text-sm text-muted-foreground mb-1">Categoría</p>
-                <p className="font-semibold">{product.category}</p>
-              </div>
-            </div>
-          </div>
-
-          <Separator />
-
-          {/* Información Financiera */}
-          <div className="space-y-4">
-            <div className="flex items-start gap-3">
-              <DollarSign className="w-4 h-4 text-muted-foreground mt-0.5" />
-              <div className="flex-1">
-                <p className="text-sm text-muted-foreground mb-1">Precio</p>
-                <p className="font-semibold text-xl text-primary">${product.price.toFixed(2)}</p>
-              </div>
-            </div>
-          </div>
-
-          <Separator />
-
-          {/* Información de Inventario */}
+        {!p ? (
+          <div className="text-sm text-muted-foreground">No hay producto seleccionado.</div>
+        ) : (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
-              <div className="flex items-start gap-3">
-                <Archive className="w-4 h-4 text-muted-foreground mt-0.5" />
-                <div className="flex-1">
-                  <p className="text-sm text-muted-foreground mb-1">Stock Actual</p>
-                  <p className="font-semibold">{product.stock} unidades</p>
-                </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">SKU</Label>
+                <div className="font-mono">{p.sku ?? "-"}</div>
               </div>
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="w-4 h-4 text-muted-foreground mt-0.5" />
-                <div className="flex-1">
-                  <p className="text-sm text-muted-foreground mb-1">Stock Mínimo</p>
-                  <p className="font-semibold">{product.minStock} unidades</p>
-                </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">ID</Label>
+                <div className="text-xs text-muted-foreground break-all font-mono">{p.id}</div>
+              </div>
+              <div className="col-span-2">
+                <Label className="text-xs text-muted-foreground">Nombre</Label>
+                <div className="font-medium">{p.name ?? "-"}</div>
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Categoría</Label>
+                <div>{p.category ? <Badge variant="outline">{p.category}</Badge> : "—"}</div>
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Código de barras</Label>
+                <div className="font-mono">{p.barcode ?? "—"}</div>
               </div>
             </div>
 
-            <div className="bg-muted/50 rounded-lg p-3 flex items-center justify-between">
-              <span className="text-sm font-medium">Estado del Inventario</span>
-              {getStockStatus()}
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <Label className="text-xs text-muted-foreground">Precio</Label>
+                <div>${Number(p.price ?? 0).toFixed(2)}</div>
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Stock</Label>
+                <div>{p.stock ?? 0}</div>
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Disponible</Label>
+                <div>{Math.max(0, Number(p.available ?? ((Number(p.stock ?? 0) - Number(p.reserved ?? 0)))))}</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label className="text-xs text-muted-foreground">Stock mínimo (opcional)</Label>
+                <div>{p.minStock ?? "—"}</div>
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Proveedor (opcional)</Label>
+                <div>{(p as any).supplier ?? "—"}</div>
+              </div>
             </div>
           </div>
-
-          <Separator />
-
-          {/* Información del Proveedor */}
-          <div className="flex items-start gap-3">
-            <Truck className="w-4 h-4 text-muted-foreground mt-0.5" />
-            <div className="flex-1">
-              <p className="text-sm text-muted-foreground mb-1">Proveedor</p>
-              <p className="font-semibold">{product.supplier}</p>
-            </div>
-          </div>
-        </div>
+        )}
       </DialogContent>
     </Dialog>
   );

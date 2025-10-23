@@ -1,25 +1,49 @@
-// src/services/products.api.ts
-import { api } from '@/lib/api';
-import { Product } from '@/types/domain';
+import { api } from '@/lib/api'
+import type { Product } from '@/types/domain'
+
+export type ProductSearchParams = {
+  q?: string
+  name?: string
+  sku?: string
+  category?: string
+  barcode?: string
+  codeLetters?: string
+  codeDigits?: string
+  page?: number | string
+  limit?: number | string
+  sortBy?: 'name' | 'sku' | 'price' | 'stock' | 'createdAt'
+  sortDir?: 'asc' | 'desc'
+}
+
+export type Paged<T> = { items: T[]; total?: number; page?: number; pages?: number; limit?: number }
 
 export class ProductsAPI {
-  static list(): Promise<Product[]> {
-    return api.get<Product[]>('/products');
+  static async search(params: ProductSearchParams = {}) {
+    return api.get<Paged<Product>>('/products', params as any)
   }
 
-  static getById(id: string): Promise<Product> {
-    return api.get<Product>(`/products/${id}`);
+  static getById(id: string) {
+    return api.get<Product>(`/products/${id}`)
   }
 
-  static create(data: Partial<Product>): Promise<Product> {
-    return api.post<Product>('/products', data);
+  static create(data: Partial<Product>) {
+    // sku es opcional: lo genera la BD/trigger
+    return api.post<Product>('/products', data)
   }
 
-  static update(id: string, data: Partial<Product>): Promise<Product> {
-    return api.patch<Product>(`/products/${id}`, data);
+  static update(id: string, data: Partial<Product>) {
+    return api.patch<Product>(`/products/${id}`, data)
   }
 
-  static delete(id: string): Promise<void> {
-    return api.delete(`/products/${id}`);
+  static delete(id: string) {
+    return api.delete<void>(`/products/${id}`)
+  }
+
+  static adjustStock(id: string, quantity: number) {
+    return api.patch<Product>(`/products/${id}/stock`, { quantity })
+  }
+
+  static nextSku(opts?: { prefix?: string; category?: string; name?: string }) {
+    return api.get<{ prefix: string; ddd: string; next: string }>(`/products/next-sku`, opts as any)
   }
 }

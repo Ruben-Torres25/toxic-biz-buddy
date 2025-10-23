@@ -5,7 +5,8 @@ import {
   Package, 
   Truck, 
   Wallet,
-  BarChart3
+  BarChart3,
+  Landmark, // 👈 NUEVO
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +22,7 @@ const menuItems = [
   { id: "products", label: "Productos", icon: Package },
   { id: "suppliers", label: "Proveedores", icon: Truck },
   { id: "cash", label: "Caja", icon: Wallet },
+  { id: "history", label: "Historial", icon: Landmark }, // 👈 NUEVO
   { id: "reports", label: "Reportes", icon: BarChart3 },
 ];
 

@@ -1,114 +1,202 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { 
-  Plus, 
-  Search, 
-  Filter, 
-  Edit, 
-  Trash2, 
+import {
+  Plus,
+  Search,
+  Filter,
+  Edit,
+  Trash2,
   Eye,
   DollarSign,
   Phone,
   Mail,
-  MapPin
+  MapPin,
+  History as HistoryIcon, // 👈 NUEVO
 } from "lucide-react";
-import { NewClientModal } from "@/components/modals/NewClientModal";
+import { NewClientModal, type NewClientPayload } from "@/components/modals/NewClientModal";
 import { ViewClientModal } from "@/components/modals/ViewClientModal";
 import { EditClientModal } from "@/components/modals/EditClientModal";
+import AdjustBalanceModal from "@/components/modals/AdjustBalanceModal";
+import ConfirmDeleteDialog from "@/components/modals/ConfirmDeleteDialog";
+import CustomerMovementsModal from "@/components/modals/CustomerMovementsModal"; // 👈 NUEVO
 import { toast } from "@/hooks/use-toast";
+import { CustomersAPI } from "@/services/customers.api";
+import type { Customer } from "@/types/domain";
+
+// === Tipo de UI (con extras para la tabla/modales) ===
+type Client = Customer & {
+  orders: number;     // placeholder UI
+  lastOrder: string;  // placeholder UI
+};
+
+// Adaptador: de DTO (back) a Client (UI)
+function toClient(dto: Customer): Client {
+  return {
+    ...dto,
+    orders: 0,
+    lastOrder: "-",
+  };
+}
 
 export const ClientsSection = () => {
+  const qc = useQueryClient();
+
   const [isNewClientOpen, setIsNewClientOpen] = useState(false);
   const [isViewClientOpen, setIsViewClientOpen] = useState(false);
   const [isEditClientOpen, setIsEditClientOpen] = useState(false);
-  const [selectedClient, setSelectedClient] = useState<any>(null);
-  
-  const [clients, setClients] = useState([
-    {
-      id: "CLI001",
-      name: "María García",
-      email: "maria.garcia@email.com",
-      phone: "+34 666 123 456",
-      address: "Calle Mayor 123, Madrid",
-      postalCode: "28001",
-      balance: 450.00,
-      orders: 12,
-      lastOrder: "2024-01-08",
-      taxId: "12345678A"
-    },
-    {
-      id: "CLI002",
-      name: "Carlos López",
-      email: "carlos.lopez@email.com", 
-      phone: "+34 677 234 567",
-      address: "Avenida España 45, Barcelona",
-      postalCode: "08001",
-      balance: -120.50,
-      orders: 8,
-      lastOrder: "2024-01-07",
-      taxId: "87654321B"
-    },
-    {
-      id: "CLI003",
-      name: "Ana Rodríguez",
-      email: "ana.rodriguez@email.com",
-      phone: "+34 688 345 678", 
-      address: "Plaza Central 8, Valencia",
-      postalCode: "46001",
-      balance: 0,
-      orders: 15,
-      lastOrder: "2024-01-06",
-      taxId: "11223344C"
-    },
-    {
-      id: "CLI004",
-      name: "Luis Martín",
-      email: "luis.martin@email.com",
-      phone: "+34 699 456 789",
-      address: "Calle Sol 67, Sevilla",
-      postalCode: "41001", 
-      balance: 230.75,
-      orders: 6,
-      lastOrder: "2024-01-05",
-      taxId: "55667788D"
-    }
-  ]);
+  const [isAdjustOpen, setIsAdjustOpen] = useState(false);
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
 
-  const getBalanceBadge = (balance: number) => {
-    if (balance > 0) {
-      return <Badge className="bg-success/10 text-success border-success/20">+€{balance.toFixed(2)}</Badge>;
-    } else if (balance < 0) {
-      return <Badge className="bg-destructive/10 text-destructive border-destructive/20">€{balance.toFixed(2)}</Badge>;
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [clientToAdjust, setClientToAdjust] = useState<{ id: string; name: string; balance?: number | null } | null>(null);
+  const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
+
+  // 👇 NUEVO: estado para historial
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [historyFor, setHistoryFor] = useState<{ id: string; name: string } | null>(null);
+
+  const [search, setSearch] = useState("");
+
+  // ===== Listar clientes desde el backend (sin paginación) =====
+  const listQuery = useQuery<Customer[]>({
+    queryKey: ["customers"],
+    queryFn: CustomersAPI.list, // devuelve Customer[]
+  });
+
+  const customers: Client[] = useMemo(() => {
+    const arr = Array.isArray(listQuery.data) ? listQuery.data : [];
+    return arr.map(toClient);
+  }, [listQuery.data]);
+
+  // ===== Mutaciones =====
+  const createMut = useMutation({
+    mutationFn: (payload: NewClientPayload) => CustomersAPI.create(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["customers"] });
+      toast({ title: "Cliente creado" });
+      setIsNewClientOpen(false);
+    },
+    onError: (e: any) => {
+      toast({ title: "Error al crear", description: e?.message ?? "Inténtalo de nuevo", variant: "destructive" });
+    },
+  });
+
+  const updateMut = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: Partial<Customer> }) =>
+      CustomersAPI.update(id, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["customers"] });
+      toast({ title: "Cliente actualizado", description: "Los cambios fueron guardados." });
+      setIsEditClientOpen(false);
+    },
+    onError: (e: any) => {
+      toast({ title: "Error al actualizar", description: e?.message ?? "Inténtalo de nuevo", variant: "destructive" });
+    },
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => CustomersAPI.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["customers"] });
+      toast({ title: "Cliente eliminado" });
+      setIsDeleteOpen(false);
+      setClientToDelete(null);
+    },
+    onError: (e: any) => {
+      toast({ title: "Error al eliminar", description: e?.message ?? "Inténtalo de nuevo", variant: "destructive" });
+    },
+  });
+
+  const adjustMut = useMutation({
+    mutationFn: ({ id, amount, reason }: { id: string; amount: number; reason?: string }) =>
+      CustomersAPI.adjustBalance(id, { amount, reason }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["customers"] });
+      toast({ title: "Saldo ajustado" });
+      setIsAdjustOpen(false);
+      setClientToAdjust(null);
+    },
+    onError: (e: any) => {
+      toast({ title: "Error ajustando saldo", description: e?.message ?? "Inténtalo de nuevo", variant: "destructive" });
+    },
+  });
+
+  // ===== Filtrado local (MVP) =====
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return customers;
+    return customers.filter((c) =>
+      [c.name, c.email ?? "", c.phone ?? "", c.phone2 ?? "", c.address ?? "", c.postalCode ?? ""]
+        .join(" ")
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [customers, search]);
+
+  // ===== Helpers UI =====
+  const getBalanceBadge = (balance?: number | null) => {
+    const v = Number(balance ?? 0);
+    if (v > 0) {
+      return <Badge className="bg-success/10 text-success border-success/20">+${v.toFixed(2)}</Badge>;
+    } else if (v < 0) {
+      return <Badge className="bg-destructive/10 text-destructive border-destructive/20">${v.toFixed(2)}</Badge>;
     } else {
-      return <Badge className="bg-muted/10 text-muted-foreground border-muted/20">€0.00</Badge>;
+      return <Badge className="bg-muted/10 text-muted-foreground border-muted/20">$0.00</Badge>;
     }
   };
 
-  const handleView = (client: any) => {
-    setSelectedClient(client);
-    setIsViewClientOpen(true);
+  const openView = (c: Client) => { setSelectedClient(c); setIsViewClientOpen(true); };
+  const openEdit = (c: Client) => { setSelectedClient(c); setIsEditClientOpen(true); };
+
+  // Abre el diálogo de confirmación
+  const handleAskDelete = (client: Client) => {
+    setClientToDelete(client);
+    setIsDeleteOpen(true);
   };
 
-  const handleEdit = (client: any) => {
-    setSelectedClient(client);
-    setIsEditClientOpen(true);
+  const confirmDelete = async () => {
+    if (!clientToDelete) return;
+    await deleteMut.mutateAsync(clientToDelete.id);
   };
 
-  const handleDelete = (clientId: string) => {
-    toast({
-      title: "Cliente eliminado",
-      description: `El cliente ${clientId} ha sido eliminado exitosamente.`,
-    });
-    setClients(clients.filter(client => client.id !== clientId));
+  const handleSaveClient = async (
+    id: string,
+    payload: {
+      name?: string;
+      phone?: string;
+      phone2?: string;
+      email?: string;
+      address?: string;
+      postalCode?: string;
+      notes?: string;
+    }
+  ) => {
+    const clean: Partial<Customer> = {
+      name: payload.name?.trim() || undefined,
+      phone: payload.phone?.trim() || undefined,
+      phone2: payload.phone2?.trim() || undefined,
+      email: payload.email?.trim() || undefined,
+      address: payload.address?.trim() || undefined,
+      postalCode: payload.postalCode?.trim() || undefined,
+      notes: payload.notes?.trim() || undefined,
+    };
+    await updateMut.mutateAsync({ id, payload: clean });
   };
 
-  const handleSaveClient = (updatedClient: any) => {
-    setClients(clients.map(client => 
-      client.id === updatedClient.id ? updatedClient : client
-    ));
+  // Abrir modal de ajuste con preview
+  const handleAdjustBalance = (client: Client) => {
+    setClientToAdjust({ id: client.id, name: client.name, balance: client.balance });
+    setIsAdjustOpen(true);
+  };
+
+  // 👇 NUEVO: abrir historial
+  const openHistory = (client: Client) => {
+    setHistoryFor({ id: client.id, name: client.name });
+    setIsHistoryOpen(true);
   };
 
   return (
@@ -118,23 +206,20 @@ export const ClientsSection = () => {
           <h1 className="text-3xl font-bold text-foreground">Gestión de Clientes</h1>
           <p className="text-muted-foreground">Administra la información de tus clientes y sus cuentas</p>
         </div>
-        <Button 
-          onClick={() => setIsNewClientOpen(true)}
-          className="bg-gradient-to-r from-secondary to-secondary-hover hover:from-secondary-hover hover:to-secondary"
-        >
+        <Button onClick={() => setIsNewClientOpen(true)}>
           <Plus className="w-4 h-4 mr-2" />
           Nuevo Cliente
         </Button>
       </div>
 
-      {/* Stats Cards */}
+      {/* Stats (MVP) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card className="bg-gradient-to-br from-card to-accent/5">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Total Clientes</p>
-                <p className="text-2xl font-bold text-foreground">142</p>
+                <p className="text-2xl font-bold text-foreground">{customers.length}</p>
               </div>
               <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center">
                 <DollarSign className="w-6 h-6 text-primary" />
@@ -142,13 +227,19 @@ export const ClientsSection = () => {
             </div>
           </CardContent>
         </Card>
-        
+
         <Card className="bg-gradient-to-br from-success/5 to-success/10 border-success/20">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Saldo a Favor</p>
-                <p className="text-2xl font-bold text-success">€680.75</p>
+                <p className="text-sm font-medium text-muted-foreground">Saldo a Favor (aprox.)</p>
+                <p className="text-2xl font-bold text-success">
+                  $
+                  {useMemo(() => {
+                    const pos = customers.reduce((acc, c) => acc + Math.max(0, Number(c.balance ?? 0)), 0);
+                    return pos.toFixed(2);
+                  }, [customers])}
+                </p>
               </div>
               <div className="w-12 h-12 bg-success/10 rounded-full flex items-center justify-center">
                 <DollarSign className="w-6 h-6 text-success" />
@@ -156,13 +247,19 @@ export const ClientsSection = () => {
             </div>
           </CardContent>
         </Card>
-        
+
         <Card className="bg-gradient-to-br from-destructive/5 to-destructive/10 border-destructive/20">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Deudas Pendientes</p>
-                <p className="text-2xl font-bold text-destructive">€120.50</p>
+                <p className="text-sm font-medium text-muted-foreground">Deudas (aprox.)</p>
+                <p className="text-2xl font-bold text-destructive">
+                  $
+                  {useMemo(() => {
+                    const neg = customers.reduce((acc, c) => acc + Math.min(0, Number(c.balance ?? 0)), 0);
+                    return Math.abs(neg).toFixed(2);
+                  }, [customers])}
+                </p>
               </div>
               <div className="w-12 h-12 bg-destructive/10 rounded-full flex items-center justify-center">
                 <DollarSign className="w-6 h-6 text-destructive" />
@@ -172,117 +269,189 @@ export const ClientsSection = () => {
         </Card>
       </div>
 
-      {/* Filters */}
+      {/* Filtros */}
       <Card>
         <CardContent className="pt-6">
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input 
-                placeholder="Buscar clientes por nombre, email o teléfono..." 
+              <Input
+                placeholder="Buscar clientes por nombre, email, teléfono o CP..."
                 className="pl-10"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
               />
             </div>
-            <Button variant="outline" className="sm:w-auto">
+            <Button variant="outline" className="sm:w-auto" disabled>
               <Filter className="w-4 h-4 mr-2" />
-              Filtros
+              Filtros (próximamente)
             </Button>
           </div>
         </CardContent>
       </Card>
 
-      {/* Clients Table */}
+      {/* Tabla */}
       <Card>
         <CardHeader>
           <CardTitle>Lista de Clientes</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-3 px-4 font-semibold text-foreground">Cliente</th>
-                  <th className="text-left py-3 px-4 font-semibold text-foreground">Contacto</th>
-                  <th className="text-left py-3 px-4 font-semibold text-foreground">Pedidos</th>
-                  <th className="text-left py-3 px-4 font-semibold text-foreground">Saldo</th>
-                  <th className="text-left py-3 px-4 font-semibold text-foreground">Último Pedido</th>
-                  <th className="text-left py-3 px-4 font-semibold text-foreground">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {clients.map((client) => (
-                  <tr key={client.id} className="border-b border-border hover:bg-accent/30 transition-colors">
-                    <td className="py-3 px-4">
-                      <div>
-                        <p className="font-medium text-foreground">{client.name}</p>
-                        <p className="text-sm text-muted-foreground flex items-center gap-1">
-                          <MapPin className="w-3 h-3" />
-                          {client.address}
-                        </p>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="space-y-1">
-                        <p className="text-sm text-foreground flex items-center gap-1">
-                          <Mail className="w-3 h-3" />
-                          {client.email}
-                        </p>
-                        <p className="text-sm text-muted-foreground flex items-center gap-1">
-                          <Phone className="w-3 h-3" />
-                          {client.phone}
-                        </p>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 text-foreground">{client.orders}</td>
-                    <td className="py-3 px-4">{getBalanceBadge(client.balance)}</td>
-                    <td className="py-3 px-4 text-muted-foreground">{client.lastOrder}</td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2">
-                        <Button 
-                          size="sm" 
-                          variant="outline" 
-                          className="h-8 w-8 p-0"
-                          onClick={() => handleView(client)}
-                        >
-                          <Eye className="w-4 h-4" />
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="outline" 
-                          className="h-8 w-8 p-0"
-                          onClick={() => handleEdit(client)}
-                        >
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="outline" 
-                          className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
-                          onClick={() => handleDelete(client.id)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </td>
+          {listQuery.isLoading ? (
+            <div className="text-sm text-muted-foreground">Cargando clientes…</div>
+          ) : listQuery.isError ? (
+            <div className="text-sm text-destructive">No se pudieron cargar los clientes.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left py-3 px-4 font-semibold text-foreground">Cliente</th>
+                    <th className="text-left py-3 px-4 font-semibold text-foreground">Contacto</th>
+                    <th className="text-left py-3 px-4 font-semibold text-foreground">Saldo</th>
+                    <th className="text-left py-3 px-4 font-semibold text-foreground">Acciones</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {filtered.map((client) => (
+                    <tr key={client.id} className="border-b border-border hover:bg-accent/30 transition-colors">
+                      <td className="py-3 px-4">
+                        <div>
+                          <p className="font-medium text-foreground">{client.name}</p>
+                          {(client.address || client.postalCode) && (
+                            <p className="text-sm text-muted-foreground flex items-center gap-1">
+                              <MapPin className="w-3 h-3" />
+                              {client.address}
+                              {client.address && client.postalCode ? " - " : " "}
+                              {client.postalCode}
+                            </p>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="space-y-1">
+                          {client.email && (
+                            <p className="text-sm text-foreground flex items-center gap-1">
+                              <Mail className="w-3 h-3" />
+                              {client.email}
+                            </p>
+                          )}
+                          {client.phone && (
+                            <p className="text-sm text-muted-foreground flex items-center gap-1">
+                              <Phone className="w-3 h-3" />
+                              {client.phone}
+                            </p>
+                          )}
+                          {client.phone2 && (
+                            <p className="text-sm text-muted-foreground flex items-center gap-1">
+                              <Phone className="w-3 h-3" />
+                              {client.phone2}
+                            </p>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4">{getBalanceBadge(client.balance)}</td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 w-8 p-0"
+                            onClick={() => openView(client)}
+                          >
+                            <Eye className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 w-8 p-0"
+                            onClick={() => openEdit(client)}
+                          >
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 w-8 p-0"
+                            onClick={() => handleAdjustBalance(client)}
+                            title="Ajustar saldo"
+                          >
+                            <DollarSign className="w-4 h-4" />
+                          </Button>
+                          {/* 👇 NUEVO botón Historial */}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 w-8 p-0"
+                            onClick={() => openHistory(client)}
+                            title="Historial"
+                          >
+                            <HistoryIcon className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => handleAskDelete(client)}
+                            disabled={deleteMut.isPending}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {filtered.length === 0 && (
+                <div className="text-sm text-muted-foreground mt-3">Sin resultados.</div>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      <NewClientModal open={isNewClientOpen} onOpenChange={setIsNewClientOpen} />
-      <ViewClientModal 
+      {/* Modales */}
+      <NewClientModal
+        open={isNewClientOpen}
+        onOpenChange={setIsNewClientOpen}
+        onCreate={async (p) => { await createMut.mutateAsync(p); }}
+      />
+      <ViewClientModal
         open={isViewClientOpen}
         onOpenChange={setIsViewClientOpen}
-        client={selectedClient}
+        client={selectedClient as any}
       />
       <EditClientModal
         open={isEditClientOpen}
         onOpenChange={setIsEditClientOpen}
-        client={selectedClient}
+        client={selectedClient as any}
         onSave={handleSaveClient}
+      />
+      <AdjustBalanceModal
+        open={isAdjustOpen}
+        onOpenChange={setIsAdjustOpen}
+        client={clientToAdjust}
+        onConfirm={async ({ id, amount, reason }) => { await adjustMut.mutateAsync({ id, amount, reason }); }}
+      />
+      <ConfirmDeleteDialog
+        open={isDeleteOpen}
+        onOpenChange={(o) => {
+          if (!o) setClientToDelete(null);
+          setIsDeleteOpen(o);
+        }}
+        title="Eliminar cliente"
+        description={`¿Seguro que querés eliminar a "${clientToDelete?.name ?? ""}"? Esta acción no se puede deshacer.`}
+        confirmLabel="Eliminar"
+        cancelLabel="Cancelar"
+        onConfirm={confirmDelete}
+        loading={deleteMut.isPending}
+      />
+      {/* 👇 NUEVO Modal de Historial */}
+      <CustomerMovementsModal
+        open={isHistoryOpen}
+        onOpenChange={(o) => { if (!o) setHistoryFor(null); setIsHistoryOpen(o); }}
+        customerId={historyFor?.id ?? null}
+        customerName={historyFor?.name ?? null}
       />
     </div>
   );

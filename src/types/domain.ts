@@ -1,5 +1,3 @@
-// src/types/domain.ts
-
 // Productos
 export interface Product {
   id: string;
@@ -9,6 +7,13 @@ export interface Product {
   stock: number;
   reserved?: number;
   available?: number;
+
+  // 🔎 Campos opcionales para el buscador
+  category?: string | null;
+  barcode?: string | null;
+
+  // 👇 NUEVO
+  minStock?: number | null;
 }
 
 // Clientes
@@ -18,6 +23,29 @@ export interface Customer {
   phone?: string;
   email?: string;
   balance: number;
+
+  phone2?: string;
+  address?: string;
+  postalCode?: string;
+  notes?: string;
+  createdAt?: string | Date;
+
+  businessName?: string;
+  cuit?: string;
+  vatStatus?: 'RI' | 'MONO' | 'EXENTO' | 'CF';
+  iibb?: string;
+  fiscalAddress?: string;
+  afipCode?: string;
+  taxNotes?: string;
+}
+
+// Historial de movimientos
+export interface CustomerMovement {
+  id: string;
+  amount: number | string;
+  type: "payment" | "debt" | "adjust";
+  reason?: string | null;
+  createdAt: string | Date;
 }
 
 // Items / Pedidos
@@ -26,13 +54,14 @@ export interface OrderItemDTO {
   productName: string;
   unitPrice: number;
   quantity: number;
-  discount?: number; // monto absoluto
+  discount?: number;
+  returnedQty?: number;
 }
 
 export interface OrderDTO {
   id: string;
   code: string | null;
-  status: "pending" | "confirmed" | "canceled";
+  status: "pending" | "confirmed" | "canceled" | "partially_returned" | "returned";
   total: number;
   notes?: string;
   customer?: Customer;
@@ -49,8 +78,6 @@ export interface CreateOrderDTO {
 // Caja
 export interface CashMovement {
   id: string;
-  // cubrir nomenclaturas del backend: sale (venta), deposit/withdrawal (manuales)
-  // mantener income/expense por compatibilidad si alguna ruta los mapea así
   type: "sale" | "deposit" | "withdrawal" | "income" | "expense";
   amount: number;
   description: string;

@@ -7,6 +7,7 @@ import { ProductsSection } from "@/components/sections/ProductsSection";
 import { SuppliersSection } from "@/components/sections/SuppliersSection";
 import { CashSection } from "@/components/sections/CashSection";
 import { ReportsSection } from "@/components/sections/ReportsSection";
+import { HistorySection } from "@/components/sections/HistorySection"; // 👈 NUEVO
 
 const Index = () => {
   const [activeSection, setActiveSection] = useState("dashboard");
@@ -27,6 +28,8 @@ const Index = () => {
         return <CashSection />;
       case "reports":
         return <ReportsSection />;
+      case "history": // 👈 NUEVO
+        return <HistorySection />;
       default:
         return <DashboardSection />;
     }
