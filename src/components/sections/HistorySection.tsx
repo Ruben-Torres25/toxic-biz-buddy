@@ -27,6 +27,12 @@ import {
 } from "@/components/common/CustomerPicker";
 import { cn } from "@/lib/utils";
 import { CashDayDetailModal } from "@/components/modals/CashDayDetailModal";
+import { Input } from "@/components/ui/input";
+import {
+  fetchCollections,
+  type CollectionsResponse,
+  type CollectionRow,
+} from "@/services/collections.api";
 
 const moneyFmt = new Intl.NumberFormat("es-AR", {
   style: "currency",
@@ -98,7 +104,42 @@ function saldoToneClasses(n: number) {
   };
 }
 
-const PAGE_SIZE = 8;
+const PAGE_SIZE = 10; // 10 por página
+
+// helper para YYYY-MM-DD con TZ segura
+function isoYMD(d: Date) {
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+/** ===== Helper robusto para nombre de cliente ===== */
+function pickCustomerName(row: any): string | null {
+  const direct =
+    row.customerName ||
+    row.saleCustomerName ||
+    row.customer?.name ||
+    row.businessName ||
+    row.customerBusinessName ||
+    row.customer ||
+    row.customer_name ||
+    row.saleDetail?.customerName ||
+    null;
+
+  if (direct && String(direct).trim().length > 0) return String(direct).trim();
+  if (row.customerId) return `#${shortId(String(row.customerId))}`;
+  return null;
+}
+
+// extrae UUID de ‘pedido XXXXX-…’ o cualquier UUID presente
+function extractOrderId(text?: string): string | null {
+  if (!text) return null;
+  const rgx1 =
+    /pedido\s+([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})/i.exec(text);
+  if (rgx1) return rgx1[1];
+  const rgx2 = /([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})/i.exec(text);
+  return rgx2 ? rgx2[1] : null;
+}
 
 export const HistorySection: React.FC = () => {
   const { from, to } = useMemo(() => monthRangeISO(new Date()), []);
@@ -194,7 +235,7 @@ export const HistorySection: React.FC = () => {
   const loadingKPIs =
     qOrders.isFetching || qPayments.isFetching || qCN.isFetching;
 
-  // ===== Ledger rows con debe/haber/saldo (ASC para calcular saldo), luego invertimos para mostrar recientes primero
+  // ===== Ledger rows con debe/haber/saldo (ASC para calcular saldo), luego invertimos
   const rowsAsc = useMemo(() => {
     const items = sortAsc(qPeriod.data?.items ?? []);
     const openingBalance = customer?.id
@@ -219,7 +260,7 @@ export const HistorySection: React.FC = () => {
   // ===== Mostrar más recientes primero
   const rowsDesc = useMemo(() => [...rowsAsc].reverse(), [rowsAsc]);
 
-  // ===== Paginar 8 filas (cliente-side) sobre orden DESC
+  // ===== Paginar 10 filas (cliente-side) sobre orden DESC
   const [ledgerPage, setLedgerPage] = React.useState(1);
   useEffect(() => {
     setLedgerPage(1); // reset al cambiar cliente/dataset
@@ -233,7 +274,7 @@ export const HistorySection: React.FC = () => {
   const ledgerRangeFrom = ledgerTotal ? ledgerStartIdx + 1 : 0;
   const ledgerRangeTo = Math.min(ledgerTotal, ledgerEndIdx);
 
-  // ===== Caja AGRUPADA POR DÍA (usa /cash/daily) → paginar a 8 y mostrar días recientes primero
+  // ===== Caja AGRUPADA POR DÍA (usa /cash/daily) → DESC + 10 por página
   const qDaily = useQuery<CashDailyDay[]>({
     queryKey: ["cash", "daily", { days: 30 }],
     queryFn: () => CashAPI.daily(30),
@@ -285,21 +326,133 @@ export const HistorySection: React.FC = () => {
 
   const showCustomerCol = !customer?.id; // mostrar “Cliente” solo en GENERAL
 
+  // ===== Cobranzas (Clientes + Caja) =====
+  const todayYMD = isoYMD(new Date());
+  const sevenDaysYMD = isoYMD(new Date(Date.now() - 7 * 864e5));
+  const thirtyDaysYMD = isoYMD(new Date(Date.now() - 30 * 864e5));
+  const oneYearYMD = isoYMD(new Date(Date.now() - 365 * 864e5));
+
+  const [cFrom, setCFrom] = React.useState(sevenDaysYMD);
+  const [cTo, setCTo] = React.useState(todayYMD);
+  const [origin, setOrigin] = React.useState<"ALL" | "CAJA" | "CLIENTES">("ALL");
+
+  const qCollections = useQuery<CollectionsResponse>({
+    queryKey: ["collections", cFrom, cTo],
+    queryFn: () =>
+      fetchCollections({
+        from: `${cFrom}T00:00:00.000Z`,
+        to: `${cTo}T23:59:59.999Z`,
+      }),
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+  });
+
+  // === Nombre de cliente para Cobranzas: consulto el ledger en el mismo rango ===
+  const qLedgerForCollections = useQuery<LedgerListResponse>({
+    queryKey: ["ledger", "collections-range", { cFrom, cTo }],
+    queryFn: () =>
+      LedgerAPI.list({
+        from: `${cFrom}T00:00:00.000Z`,
+        to: `${cTo}T23:59:59.999Z`,
+        pageSize: 1000,
+      }),
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+  });
+
+  const nameMaps = useMemo(() => {
+    const items = qLedgerForCollections.data?.items ?? [];
+    const byCustomerId = new Map<string, string>();
+    const bySourceId = new Map<string, string>();
+    for (const it of items as any[]) {
+      const cid = it.customerId;
+      const cname = it.customerName;
+      if (cid && cname && !byCustomerId.has(cid)) byCustomerId.set(cid, cname);
+      const sid = it.sourceId;
+      if (sid && cname && !bySourceId.has(sid)) bySourceId.set(sid, cname);
+    }
+    return { byCustomerId, bySourceId };
+  }, [qLedgerForCollections.data]);
+
+  function originOf(it: CollectionRow): "CAJA" | "CLIENTES" {
+    if ((it as any).source === "CLIENTES") return "CLIENTES";
+    if ((it as any).customerId || (it as any).customerName) return "CLIENTES";
+    if (/(venta\s+pedido|pedido)/i.test((it as any).description ?? "")) return "CLIENTES";
+    return "CAJA";
+  }
+
+  const cobranzasRows = useMemo<CollectionRow[]>(() => {
+    const all = qCollections.data?.items ?? [];
+    if (origin === "ALL") return all;
+    return all.filter((it) => originOf(it) === origin);
+  }, [qCollections.data, origin]);
+
+  // Totales por medio de pago según filtro de origen
+  type Totals = {
+    EFECTIVO: number; TRANSFERENCIA: number; DEBITO: number; CREDITO: number; OTRO: number; TOTAL: number;
+  };
+  const computeTotals = (rows: CollectionRow[]): Totals => {
+    const base: Totals = { EFECTIVO: 0, TRANSFERENCIA: 0, DEBITO: 0, CREDITO: 0, OTRO: 0, TOTAL: 0 };
+    for (const it of rows) {
+      const k = ((it as any).method ?? "OTRO") as keyof Totals;
+      const amt = Number((it as any).amount || 0);
+      if (k in base) base[k] += amt; else base.OTRO += amt;
+      base.TOTAL += amt;
+    }
+    return base;
+  };
+  const totalsFiltered = useMemo(() => computeTotals(cobranzasRows), [cobranzasRows]);
+
+  // ===== Paginación de Cobranzas (10 por página) =====
+  const [collPage, setCollPage] = React.useState(1);
+  useEffect(() => {
+    setCollPage(1); // reset al cambiar filtros/dataset
+  }, [origin, cFrom, cTo, cobranzasRows.length]);
+
+  const collTotal = cobranzasRows.length;
+  const collTotalPages = Math.max(1, Math.ceil(collTotal / PAGE_SIZE));
+  const collStartIdx = (collPage - 1) * PAGE_SIZE;
+  const collEndIdx = collStartIdx + PAGE_SIZE;
+  const cobranzasPaged = cobranzasRows.slice(collStartIdx, collEndIdx);
+  const collRangeFrom = collTotal ? collStartIdx + 1 : 0;
+  const collRangeTo = Math.min(collTotal, collEndIdx);
+
+  // Label amigable para origen
+  const originLabel = origin === "ALL" ? "Todos" : origin === "CAJA" ? "Caja" : "Clientes";
+
+  // Resolver nombre de cliente para Cobranzas
+  function resolveCustomerForRow(row: any): string {
+    const rowOrigin = originOf(row);
+    if (rowOrigin === "CAJA") return "Consumidor Final";
+
+    const direct = pickCustomerName(row);
+    if (direct) return direct;
+
+    if (row.customerId && nameMaps.byCustomerId.has(row.customerId)) {
+      return nameMaps.byCustomerId.get(row.customerId)!;
+    }
+    const sid =
+      row.sourceId ||
+      row.orderId ||
+      row.referenceId ||
+      extractOrderId(row.description);
+    if (sid && nameMaps.bySourceId.has(sid)) {
+      return nameMaps.bySourceId.get(sid)!;
+    }
+    return "—";
+  }
+
   return (
     <div className="space-y-6">
-      {/* Header + Filtro por cliente */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-center gap-2">
-          <History className="w-6 h-6 text-primary" />
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Historial</h1>
-            <p className="text-sm text-muted-foreground">
-              KPIs y movimientos contables{" "}
-              {customer ? `— Cliente: ${customer.name}` : "— General"}
-            </p>
-          </div>
+      {/* Header general (sin picker ahora) */}
+      <div className="flex items-center gap-2">
+        <History className="w-6 h-6 text-primary" />
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Historial</h1>
+          <p className="text-sm text-muted-foreground">
+            KPIs y movimientos contables {customer ? `— Cliente: ${customer.name}` : "— General"}
+          </p>
         </div>
-        <CustomerPicker value={customer} onChange={setCustomer} />
       </div>
 
       {/* KPIs */}
@@ -317,12 +470,18 @@ export const HistorySection: React.FC = () => {
 
       {/* Tabla Debe / Haber / Saldo (recientes primero) */}
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="flex items-center gap-2">
             <Landmark className="w-5 h-5 text-primary" />
             {customer ? "Cuenta corriente del cliente" : "Movimientos recientes (general)"}
           </CardTitle>
+
+          {/* 👇 CustomerPicker movido adentro del recuadro */}
+          <div className="w-full sm:w-auto">
+            <CustomerPicker value={customer} onChange={setCustomer} />
+          </div>
         </CardHeader>
+
         <CardContent>
           <div className="rounded-lg border overflow-hidden">
             <div className="overflow-auto">
@@ -390,13 +549,9 @@ export const HistorySection: React.FC = () => {
                             {(r as any).customerName ?? "—"}
                           </td>
                         )}
-                        <td className="p-2 align-middle font-mono">
-                          {shortId(r.sourceId)}
-                        </td>
+                        <td className="p-2 align-middle font-mono">{shortId(r.sourceId)}</td>
                         <td className="p-2 align-middle">
-                          <span className="text-muted-foreground">
-                            {r.description ?? "—"}
-                          </span>
+                          <span className="text-muted-foreground">{r.description ?? "—"}</span>
                         </td>
                         <td
                           className={cn(
@@ -453,7 +608,7 @@ export const HistorySection: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Caja por día (usa /cash/daily) → DESC + 8 por página */}
+      {/* Caja por día (usa /cash/daily) → DESC + 10 por página */}
       <Card>
         <CardHeader className="py-3">
           <CardTitle className="text-base">
@@ -536,7 +691,119 @@ export const HistorySection: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Modal de detalle del día: pasa g.details (si tu backend las expone) */}
+      {/* Cobranzas (Clientes + Caja) */}
+      <Card>
+        <CardHeader className="py-3">
+          <CardTitle className="text-base">Cobranzas (Clientes + Caja)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Filtros rápidos */}
+          <div className="flex flex-wrap gap-2 items-center">
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={() => { setCFrom(sevenDaysYMD); setCTo(todayYMD); }}>
+                Últimos 7 días
+              </Button>
+              <Button variant="secondary" onClick={() => { setCFrom(thirtyDaysYMD); setCTo(todayYMD); }}>
+                Últimos 30 días
+              </Button>
+              <Button variant="secondary" onClick={() => { setCFrom(oneYearYMD); setCTo(todayYMD); }}>
+                Último año
+              </Button>
+            </div>
+            <div className="flex items-center gap-2 ml-auto">
+              <Input type="date" value={cFrom} onChange={(e) => setCFrom(e.target.value)} aria-label="Desde" />
+              <span className="text-muted-foreground">→</span>
+              <Input type="date" value={cTo} onChange={(e) => setCTo(e.target.value)} aria-label="Hasta" />
+            </div>
+          </div>
+
+          {/* Filtro por origen + resumen */}
+          <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4 md:justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Origen:</span>
+              <Button size="sm" className="rounded-full" variant={origin === "ALL" ? "default" : "outline"} onClick={() => setOrigin("ALL")}>Todos</Button>
+              <Button size="sm" className="rounded-full" variant={origin === "CAJA" ? "default" : "outline"} onClick={() => setOrigin("CAJA")}>Caja</Button>
+              <Button size="sm" className="rounded-full" variant={origin === "CLIENTES" ? "default" : "outline"} onClick={() => setOrigin("CLIENTES")}>Clientes</Button>
+            </div>
+
+            <div className="text-sm text-muted-foreground">
+              Cobranzas filtradas: <span className="font-medium text-foreground">{collTotal}</span>{" "}
+              · <span className="font-medium text-foreground">{originLabel}</span>{" "}
+              · Total del filtro: <span className="font-semibold text-foreground">{moneyFmt.format(totalsFiltered.TOTAL)}</span>
+            </div>
+          </div>
+
+          {/* Totales por medio de pago */}
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+            {["EFECTIVO", "TRANSFERENCIA", "DEBITO", "CREDITO", "TOTAL"].map((k) => (
+              <Card key={k} className="shadow-sm">
+                <CardHeader className="py-2">
+                  <CardTitle className="text-xs text-muted-foreground">{k}</CardTitle>
+                </CardHeader>
+                <CardContent className="text-2xl font-semibold tabular-nums">
+                  {qCollections.isLoading ? "…" : moneyFmt.format((totalsFiltered as any)[k] ?? 0)}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {/* Detalle (paginado a 10) */}
+          <div className="rounded-lg border overflow-hidden">
+            <div className="overflow-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-10">
+                  <tr className="border-b [&>th]:px-3 [&>th]:py-2">
+                    <th className="text-left">Fecha</th>
+                    <th className="text-left">Origen</th>
+                    <th className="text-left">Cliente</th>
+                    <th className="text-left">Medio</th>
+                    <th className="text-left">Detalle</th>
+                    <th className="text-right">Monto</th>
+                  </tr>
+                </thead>
+                <tbody className="[&>tr:nth-child(even)]:bg-muted/20">
+                  {qCollections.isFetching && (
+                    <tr><td colSpan={6} className="px-3 py-4">Cargando…</td></tr>
+                  )}
+                  {!qCollections.isFetching && cobranzasPaged.length === 0 && (
+                    <tr><td colSpan={6} className="px-3 py-4">Sin cobranzas para {originLabel.toLowerCase()} en el rango seleccionado.</td></tr>
+                  )}
+                  {cobranzasPaged.map((it) => {
+                    const rowOrigin = originOf(it);
+                    const name = rowOrigin === "CAJA" ? "Consumidor Final" : resolveCustomerForRow(it);
+                    return (
+                      <tr key={`${(it as any).source || "row"}-${(it as any).id || shortId((it as any).description)}`} className="border-b last:border-b-0 [&>td]:px-3 [&>td]:py-2">
+                        <td>{new Date((it as any).date).toLocaleString("es-AR")}</td>
+                        <td>{rowOrigin}</td>
+                        <td>{name}</td>
+                        <td>{(it as any).method}</td>
+                        <td className="truncate max-w-[360px]">{(it as any).description ?? "—"}</td>
+                        <td className="text-right tabular-nums">{moneyFmt.format(Number((it as any).amount || 0))}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Paginador (cobranzas) */}
+            <div className="flex items-center justify-between px-3 py-2 border-t bg-background/70">
+              <div className="text-xs text-muted-foreground">
+                {collTotal ? `Mostrando ${collRangeFrom}–${collRangeTo} de ${collTotal}` : "Sin resultados"}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => setCollPage(1)} disabled={collPage <= 1}>«</Button>
+                <Button size="sm" variant="outline" onClick={() => setCollPage((p) => Math.max(1, p - 1))} disabled={collPage <= 1}>Anterior</Button>
+                <span className="text-sm tabular-nums">{collPage} / {collTotalPages}</span>
+                <Button size="sm" variant="outline" onClick={() => setCollPage((p) => Math.min(collTotalPages, p + 1))} disabled={collPage >= collTotalPages}>Siguiente</Button>
+                <Button size="sm" variant="outline" onClick={() => setCollPage(collTotalPages)} disabled={collPage >= collTotalPages}>»</Button>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Modal de detalle del día */}
       <CashDayDetailModal
         open={cashDetailOpen}
         onOpenChange={setCashDetailOpen}
@@ -574,7 +841,7 @@ function StatsCard({ title, value, icon: Icon, variant = "default" }: StatsCardP
       : "text-primary";
 
   return (
-    <Card>
+    <Card className="shadow-sm">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground">
           {title}
