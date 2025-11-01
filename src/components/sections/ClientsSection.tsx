@@ -15,32 +15,23 @@ import {
   Phone,
   Mail,
   MapPin,
-  History as HistoryIcon, // 👈 NUEVO
+  History as HistoryIcon,
+  HandCoins,
 } from "lucide-react";
 import { NewClientModal, type NewClientPayload } from "@/components/modals/NewClientModal";
 import { ViewClientModal } from "@/components/modals/ViewClientModal";
 import { EditClientModal } from "@/components/modals/EditClientModal";
 import AdjustBalanceModal from "@/components/modals/AdjustBalanceModal";
 import ConfirmDeleteDialog from "@/components/modals/ConfirmDeleteDialog";
-import CustomerMovementsModal from "@/components/modals/CustomerMovementsModal"; // 👈 NUEVO
+import CustomerMovementsModal from "@/components/modals/CustomerMovementsModal";
+
 import { toast } from "@/hooks/use-toast";
 import { CustomersAPI } from "@/services/customers.api";
 import type { Customer } from "@/types/domain";
+import RegisterPaymentModal from "../modals/AddPaymentModal";
 
-// === Tipo de UI (con extras para la tabla/modales) ===
-type Client = Customer & {
-  orders: number;     // placeholder UI
-  lastOrder: string;  // placeholder UI
-};
-
-// Adaptador: de DTO (back) a Client (UI)
-function toClient(dto: Customer): Client {
-  return {
-    ...dto,
-    orders: 0,
-    lastOrder: "-",
-  };
-}
+type Client = Customer & { orders: number; lastOrder: string; };
+const toClient = (dto: Customer): Client => ({ ...dto, orders: 0, lastOrder: "-" });
 
 export const ClientsSection = () => {
   const qc = useQueryClient();
@@ -50,21 +41,21 @@ export const ClientsSection = () => {
   const [isEditClientOpen, setIsEditClientOpen] = useState(false);
   const [isAdjustOpen, setIsAdjustOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isPayOpen, setIsPayOpen] = useState(false);
 
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [clientToAdjust, setClientToAdjust] = useState<{ id: string; name: string; balance?: number | null } | null>(null);
   const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
-
-  // 👇 NUEVO: estado para historial
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [historyFor, setHistoryFor] = useState<{ id: string; name: string } | null>(null);
+  const [payFor, setPayFor] = useState<{ id: string; name: string } | null>(null);
 
   const [search, setSearch] = useState("");
 
-  // ===== Listar clientes desde el backend (sin paginación) =====
+  // Lista de clientes (backend ya trae balance sincronizado)
   const listQuery = useQuery<Customer[]>({
     queryKey: ["customers"],
-    queryFn: CustomersAPI.list, // devuelve Customer[]
+    queryFn: CustomersAPI.list,
   });
 
   const customers: Client[] = useMemo(() => {
@@ -72,7 +63,7 @@ export const ClientsSection = () => {
     return arr.map(toClient);
   }, [listQuery.data]);
 
-  // ===== Mutaciones =====
+  // Mutaciones
   const createMut = useMutation({
     mutationFn: (payload: NewClientPayload) => CustomersAPI.create(payload),
     onSuccess: () => {
@@ -80,22 +71,17 @@ export const ClientsSection = () => {
       toast({ title: "Cliente creado" });
       setIsNewClientOpen(false);
     },
-    onError: (e: any) => {
-      toast({ title: "Error al crear", description: e?.message ?? "Inténtalo de nuevo", variant: "destructive" });
-    },
+    onError: (e: any) => toast({ title: "Error al crear", description: e?.message ?? "Inténtalo de nuevo", variant: "destructive" }),
   });
 
   const updateMut = useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: Partial<Customer> }) =>
-      CustomersAPI.update(id, payload),
+    mutationFn: ({ id, payload }: { id: string; payload: Partial<Customer> }) => CustomersAPI.update(id, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["customers"] });
       toast({ title: "Cliente actualizado", description: "Los cambios fueron guardados." });
       setIsEditClientOpen(false);
     },
-    onError: (e: any) => {
-      toast({ title: "Error al actualizar", description: e?.message ?? "Inténtalo de nuevo", variant: "destructive" });
-    },
+    onError: (e: any) => toast({ title: "Error al actualizar", description: e?.message ?? "Inténtalo de nuevo", variant: "destructive" }),
   });
 
   const deleteMut = useMutation({
@@ -106,9 +92,7 @@ export const ClientsSection = () => {
       setIsDeleteOpen(false);
       setClientToDelete(null);
     },
-    onError: (e: any) => {
-      toast({ title: "Error al eliminar", description: e?.message ?? "Inténtalo de nuevo", variant: "destructive" });
-    },
+    onError: (e: any) => toast({ title: "Error al eliminar", description: e?.message ?? "Inténtalo de nuevo", variant: "destructive" }),
   });
 
   const adjustMut = useMutation({
@@ -120,12 +104,10 @@ export const ClientsSection = () => {
       setIsAdjustOpen(false);
       setClientToAdjust(null);
     },
-    onError: (e: any) => {
-      toast({ title: "Error ajustando saldo", description: e?.message ?? "Inténtalo de nuevo", variant: "destructive" });
-    },
+    onError: (e: any) => toast({ title: "Error ajustando saldo", description: e?.message ?? "Inténtalo de nuevo", variant: "destructive" }),
   });
 
-  // ===== Filtrado local (MVP) =====
+  // Filtro
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return customers;
@@ -137,13 +119,13 @@ export const ClientsSection = () => {
     );
   }, [customers, search]);
 
-  // ===== Helpers UI =====
+  // UI helpers
   const getBalanceBadge = (balance?: number | null) => {
     const v = Number(balance ?? 0);
     if (v > 0) {
-      return <Badge className="bg-success/10 text-success border-success/20">+${v.toFixed(2)}</Badge>;
+      return <Badge className="bg-destructive/10 text-destructive border-destructive/20">+${v.toFixed(2)}</Badge>;
     } else if (v < 0) {
-      return <Badge className="bg-destructive/10 text-destructive border-destructive/20">${v.toFixed(2)}</Badge>;
+      return <Badge className="bg-success/10 text-success border-success/20">-${Math.abs(v).toFixed(2)}</Badge>;
     } else {
       return <Badge className="bg-muted/10 text-muted-foreground border-muted/20">$0.00</Badge>;
     }
@@ -151,30 +133,11 @@ export const ClientsSection = () => {
 
   const openView = (c: Client) => { setSelectedClient(c); setIsViewClientOpen(true); };
   const openEdit = (c: Client) => { setSelectedClient(c); setIsEditClientOpen(true); };
+  const openHistory = (c: Client) => { setHistoryFor({ id: c.id, name: c.name }); setIsHistoryOpen(true); };
+  const askDelete = (c: Client) => { setClientToDelete(c); setIsDeleteOpen(true); };
+  const confirmDelete = async () => { if (!clientToDelete) return; await deleteMut.mutateAsync(clientToDelete.id); };
 
-  // Abre el diálogo de confirmación
-  const handleAskDelete = (client: Client) => {
-    setClientToDelete(client);
-    setIsDeleteOpen(true);
-  };
-
-  const confirmDelete = async () => {
-    if (!clientToDelete) return;
-    await deleteMut.mutateAsync(clientToDelete.id);
-  };
-
-  const handleSaveClient = async (
-    id: string,
-    payload: {
-      name?: string;
-      phone?: string;
-      phone2?: string;
-      email?: string;
-      address?: string;
-      postalCode?: string;
-      notes?: string;
-    }
-  ) => {
+  const handleSaveClient = async (id: string, payload: Partial<Customer>) => {
     const clean: Partial<Customer> = {
       name: payload.name?.trim() || undefined,
       phone: payload.phone?.trim() || undefined,
@@ -185,18 +148,6 @@ export const ClientsSection = () => {
       notes: payload.notes?.trim() || undefined,
     };
     await updateMut.mutateAsync({ id, payload: clean });
-  };
-
-  // Abrir modal de ajuste con preview
-  const handleAdjustBalance = (client: Client) => {
-    setClientToAdjust({ id: client.id, name: client.name, balance: client.balance });
-    setIsAdjustOpen(true);
-  };
-
-  // 👇 NUEVO: abrir historial
-  const openHistory = (client: Client) => {
-    setHistoryFor({ id: client.id, name: client.name });
-    setIsHistoryOpen(true);
   };
 
   return (
@@ -212,7 +163,7 @@ export const ClientsSection = () => {
         </Button>
       </div>
 
-      {/* Stats (MVP) */}
+      {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card className="bg-gradient-to-br from-card to-accent/5">
           <CardContent className="pt-6">
@@ -232,12 +183,12 @@ export const ClientsSection = () => {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Saldo a Favor (aprox.)</p>
+                <p className="text-sm font-medium text-muted-foreground">Saldo a favor (suma de negativos)</p>
                 <p className="text-2xl font-bold text-success">
                   $
                   {useMemo(() => {
-                    const pos = customers.reduce((acc, c) => acc + Math.max(0, Number(c.balance ?? 0)), 0);
-                    return pos.toFixed(2);
+                    const negAbs = customers.reduce((acc, c) => acc + Math.abs(Math.min(0, Number(c.balance ?? 0))), 0);
+                    return negAbs.toFixed(2);
                   }, [customers])}
                 </p>
               </div>
@@ -252,12 +203,12 @@ export const ClientsSection = () => {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Deudas (aprox.)</p>
+                <p className="text-sm font-medium text-muted-foreground">Deudas (suma de positivos)</p>
                 <p className="text-2xl font-bold text-destructive">
                   $
                   {useMemo(() => {
-                    const neg = customers.reduce((acc, c) => acc + Math.min(0, Number(c.balance ?? 0)), 0);
-                    return Math.abs(neg).toFixed(2);
+                    const pos = customers.reduce((acc, c) => acc + Math.max(0, Number(c.balance ?? 0)), 0);
+                    return pos.toFixed(2);
                   }, [customers])}
                 </p>
               </div>
@@ -274,7 +225,7 @@ export const ClientsSection = () => {
         <CardContent className="pt-6">
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 placeholder="Buscar clientes por nombre, email, teléfono o CP..."
                 className="pl-10"
@@ -352,32 +303,36 @@ export const ClientsSection = () => {
                       <td className="py-3 px-4">{getBalanceBadge(client.balance)}</td>
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8 w-8 p-0"
-                            onClick={() => openView(client)}
-                          >
+                          <Button size="sm" variant="outline" className="h-8 w-8 p-0" onClick={() => openView(client)}>
                             <Eye className="w-4 h-4" />
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8 w-8 p-0"
-                            onClick={() => openEdit(client)}
-                          >
+                          <Button size="sm" variant="outline" className="h-8 w-8 p-0" onClick={() => openEdit(client)}>
                             <Edit className="w-4 h-4" />
                           </Button>
+
+                          {/* Agregar pago */}
                           <Button
                             size="sm"
                             variant="outline"
                             className="h-8 w-8 p-0"
-                            onClick={() => handleAdjustBalance(client)}
+                            title="Agregar pago"
+                            onClick={() => { setPayFor({ id: client.id, name: client.name }); setIsPayOpen(true); }}
+                          >
+                            <HandCoins className="w-4 h-4" />
+                          </Button>
+
+                          {/* Ajuste */}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 w-8 p-0"
+                            onClick={() => { setClientToAdjust({ id: client.id, name: client.name, balance: client.balance }); setIsAdjustOpen(true); }}
                             title="Ajustar saldo"
                           >
                             <DollarSign className="w-4 h-4" />
                           </Button>
-                          {/* 👇 NUEVO botón Historial */}
+
+                          {/* Historial */}
                           <Button
                             size="sm"
                             variant="outline"
@@ -387,11 +342,13 @@ export const ClientsSection = () => {
                           >
                             <HistoryIcon className="w-4 h-4" />
                           </Button>
+
+                          {/* Eliminar */}
                           <Button
                             size="sm"
                             variant="outline"
                             className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
-                            onClick={() => handleAskDelete(client)}
+                            onClick={() => askDelete(client)}
                             disabled={deleteMut.isPending}
                           >
                             <Trash2 className="w-4 h-4" />
@@ -402,31 +359,16 @@ export const ClientsSection = () => {
                   ))}
                 </tbody>
               </table>
-              {filtered.length === 0 && (
-                <div className="text-sm text-muted-foreground mt-3">Sin resultados.</div>
-              )}
+              {filtered.length === 0 && <div className="text-sm text-muted-foreground mt-3">Sin resultados.</div>}
             </div>
           )}
         </CardContent>
       </Card>
 
       {/* Modales */}
-      <NewClientModal
-        open={isNewClientOpen}
-        onOpenChange={setIsNewClientOpen}
-        onCreate={async (p) => { await createMut.mutateAsync(p); }}
-      />
-      <ViewClientModal
-        open={isViewClientOpen}
-        onOpenChange={setIsViewClientOpen}
-        client={selectedClient as any}
-      />
-      <EditClientModal
-        open={isEditClientOpen}
-        onOpenChange={setIsEditClientOpen}
-        client={selectedClient as any}
-        onSave={handleSaveClient}
-      />
+      <NewClientModal open={isNewClientOpen} onOpenChange={setIsNewClientOpen} onCreate={async (p) => { await createMut.mutateAsync(p); }} />
+      <ViewClientModal open={isViewClientOpen} onOpenChange={setIsViewClientOpen} client={selectedClient as any} />
+      <EditClientModal open={isEditClientOpen} onOpenChange={setIsEditClientOpen} client={selectedClient as any} onSave={handleSaveClient} />
       <AdjustBalanceModal
         open={isAdjustOpen}
         onOpenChange={setIsAdjustOpen}
@@ -435,10 +377,7 @@ export const ClientsSection = () => {
       />
       <ConfirmDeleteDialog
         open={isDeleteOpen}
-        onOpenChange={(o) => {
-          if (!o) setClientToDelete(null);
-          setIsDeleteOpen(o);
-        }}
+        onOpenChange={(o) => { if (!o) setClientToDelete(null); setIsDeleteOpen(o); }}
         title="Eliminar cliente"
         description={`¿Seguro que querés eliminar a "${clientToDelete?.name ?? ""}"? Esta acción no se puede deshacer.`}
         confirmLabel="Eliminar"
@@ -446,13 +385,19 @@ export const ClientsSection = () => {
         onConfirm={confirmDelete}
         loading={deleteMut.isPending}
       />
-      {/* 👇 NUEVO Modal de Historial */}
       <CustomerMovementsModal
         open={isHistoryOpen}
         onOpenChange={(o) => { if (!o) setHistoryFor(null); setIsHistoryOpen(o); }}
         customerId={historyFor?.id ?? null}
         customerName={historyFor?.name ?? null}
       />
+      <RegisterPaymentModal
+        open={isPayOpen}
+        onOpenChange={(o) => { if (!o) setPayFor(null); setIsPayOpen(o); }}
+        customer={payFor}
+      />
     </div>
   );
 };
+
+export default ClientsSection;

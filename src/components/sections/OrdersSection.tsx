@@ -17,8 +17,16 @@ import { OrdersAPI } from "@/services/orders.api";
 import { CashAPI } from "@/services/cash.api";
 import type { OrderDTO } from "@/types/domain";
 
-// ✅ Agregamos los nuevos estados
 type OrderStatus = "pending" | "confirmed" | "canceled" | "partially_returned" | "returned";
+
+// === helpers dinero/IVA ===
+const IVA_RATE = 0.21;
+const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+const moneyFmt =
+  typeof Intl !== "undefined"
+    ? new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 2 })
+    : { format: (n: number) => `$${Number(n ?? 0).toFixed(2)}` };
+const fmtMoney = (n: any) => moneyFmt.format(Number(n ?? 0));
 
 export function OrdersSection() {
   const navigate = useNavigate();
@@ -141,7 +149,7 @@ export function OrdersSection() {
     cancelOrderMutation.mutate(orderId);
   };
 
-  // ⬇️ Actualización optimista + recálculo del total en UI
+  // ⬇️ Actualización optimista + recálculo del total con IVA
   const handleSaveOrder = async (updated: OrderDTO) => {
     try {
       await OrdersAPI.update(updated.id, updated);
@@ -154,22 +162,25 @@ export function OrdersSection() {
           ? (updated as any).items
           : undefined;
 
+        // total con IVA a partir de items (fallback al total que trae el backend)
         const recomputedTotal = newItems
-          ? newItems.reduce(
-              (acc: number, it: any) =>
-                acc +
-                Number(it?.unitPrice ?? 0) * Number(it?.quantity ?? 0) -
-                Number(it?.discount ?? 0),
-              0
-            )
-          : undefined;
+          ? newItems.reduce((acc: number, it: any) => {
+              const price = Number(it?.unitPrice ?? 0);
+              const qty = Number(it?.quantity ?? 0);
+              const disc = Number(it?.discount ?? 0);
+              const net = r2(price * qty - disc);           // s/IVA
+              const iva = r2(Math.max(0, net * IVA_RATE));  // 21%
+              const gross = r2(net + iva);                  // c/IVA
+              return acc + gross;
+            }, 0)
+          : Number((updated as any)?.total ?? 0);
 
         return old.map((o) =>
           o.id === updated.id
             ? {
                 ...o,
                 items: newItems ?? o.items,
-                total: recomputedTotal ?? o.total,
+                total: recomputedTotal, // dejamos total con IVA
                 ...(updated as any).notes ? { notes: (updated as any).notes } : {},
               }
             : o
@@ -201,10 +212,8 @@ export function OrdersSection() {
       confirmado: "confirmed",
       completado: "confirmed",
       cancelado: "canceled",
-      // por si backend devuelve en español:
       "devolución parcial": "partially_returned",
       devuelto: "returned",
-      // ya en inglés:
       partially_returned: "partially_returned",
       returned: "returned",
       pending: "pending",
@@ -407,14 +416,17 @@ export function OrdersSection() {
                     ? order.items.reduce((acc, it: any) => acc + Number(it?.quantity ?? 0), 0)
                     : 0;
 
-                  const totalFromItems = Array.isArray(order.items)
-                    ? order.items.reduce(
-                        (acc, it: any) =>
-                          acc +
-                          Number(it?.unitPrice ?? 0) * Number(it?.quantity ?? 0) -
-                          Number(it?.discount ?? 0),
-                        0
-                      )
+                  // === TOTAL CON IVA (21%) ===
+                  const totalGross = Array.isArray(order.items) && order.items.length > 0
+                    ? order.items.reduce((acc, it: any) => {
+                        const price = Number(it?.unitPrice ?? 0);
+                        const qty = Number(it?.quantity ?? 0);
+                        const disc = Number(it?.discount ?? 0);
+                        const net = r2(price * qty - disc);           // s/IVA
+                        const iva = r2(Math.max(0, net * IVA_RATE));  // 21%
+                        const gross = r2(net + iva);                  // c/IVA
+                        return acc + gross;
+                      }, 0)
                     : Number(order.total ?? 0);
 
                   const disabledConfirm = order.status !== "pending" || !cashOpen;
@@ -434,8 +446,8 @@ export function OrdersSection() {
                         {qtyTotal} {qtyTotal === 1 ? "item" : "items"}
                       </td>
 
-                      <td className="py-3 px-4 font-semibold text-foreground">
-                        ${Number(totalFromItems).toFixed(2)}
+                      <td className="py-3 px-4 font-semibold text-foreground tabular-nums">
+                        {fmtMoney(totalGross)}
                       </td>
 
                       <td className="py-3 px-4">{getStatusBadge(order.status as OrderStatus)}</td>
@@ -522,8 +534,12 @@ export function OrdersSection() {
 
       {/* Modals */}
       <ViewOrderModal
+        key={selectedOrder?.id ?? "no-order"}              // 👈 fuerza remount cuando cambia el pedido
         open={isViewModalOpen}
-        onOpenChange={setIsViewModalOpen}
+        onOpenChange={(o) => {                            // 👈 al cerrar, limpiamos selección
+          setIsViewModalOpen(o);
+          if (!o) setSelectedOrder(null);
+        }}
         order={selectedOrder}
         onSoftRefresh={softRefresh}
       />

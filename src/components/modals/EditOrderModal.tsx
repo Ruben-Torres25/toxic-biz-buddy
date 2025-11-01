@@ -8,6 +8,16 @@ import { Plus, Trash2, Save, X } from "lucide-react";
 import type { OrderDTO, OrderItemDTO, Product } from "@/types/domain";
 import ProductSearchModal from "@/components/modals/ProductSearchModal";
 
+/** ===== Tipos internos ===== */
+type UIItem = {
+  id: string;
+  productId: string;
+  productName: string;
+  unitPrice: number;      // SIN IVA (solo lectura)
+  quantity: number;
+  discountPercent: number; // % por ítem (UI)
+};
+
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -15,89 +25,42 @@ type Props = {
   onSave: (updated: OrderDTO) => Promise<void> | void;
 };
 
-type UIItem = {
-  id: string;
-  productId: string;
-  productName: string;
-  unitPrice: number;      // PRECIO SIN IVA
-  quantity: number;
-  discountPercent: number;
-};
+/** ===== Configuración / helpers ===== */
+const IVA_RATE = 0.21;
+const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+const clampPct = (n: number) => Math.min(100, Math.max(0, Number.isFinite(n) ? r2(n) : 0));
 
-/* ============================================
-   Configuración de IVA (Argentina)
-   Cambiá este valor si usás otra alícuota.
-   ============================================ */
-const IVA_RATE = 0.21; // 21%
-
-/* ============================================
-   Helpers de descuento e importes
-   ============================================ */
-
-// $ a %
 const amountToPercent = (amount: number, unitPrice: number, qty: number) => {
   const base = Number(unitPrice) * Number(qty);
   if (base <= 0) return 0;
-  const pct = (Number(amount || 0) / base) * 100;
-  return clampPct(pct);
+  return clampPct((Number(amount || 0) / base) * 100);
 };
 
-// % a $
 const percentToAmount = (percent: number, unitPrice: number, qty: number) => {
   const base = Number(unitPrice) * Number(qty);
-  const pct = clampPct(percent);
-  return round2((base * pct) / 100);
+  return r2((base * clampPct(percent)) / 100);
 };
 
-const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
-const clampPct = (n: number) => Math.min(100, Math.max(0, Number.isFinite(n) ? round2(n) : 0));
-
-/** Cálculo por línea (sin IVA / IVA / con IVA) */
 const lineCalc = (r: UIItem) => {
   const base = r.unitPrice * r.quantity;                 // sin IVA
-  const disc = percentToAmount(r.discountPercent, r.unitPrice, r.quantity);
-  const net = round2(base - disc);                       // Subt. s/IVA
-  const iva = round2(net * IVA_RATE);                    // IVA
-  const gross = round2(net + iva);                       // Total c/IVA
-  return { base, disc, net, iva, gross };
+  const disc = percentToAmount(r.discountPercent, r.unitPrice, r.quantity); // $ por ítem
+  const net = r2(base - disc);                           // Subt. s/IVA (tras desc. por ítem)
+  return { base, disc, net };
 };
 
-/**
- * Fusiona UIItems idénticos: mismo productId + mismo unitPrice + mismo discountPercent.
- * Suma cantidades y mantiene nombres. Redondea a 2 decimales para claves estables.
- */
-const mergeUIItems = (items: UIItem[]): UIItem[] => {
-  if (!Array.isArray(items) || items.length === 0) return [];
-  const map = new Map<string, UIItem>();
+/** Intenta leer metadata del %/monto/base global */
+const extractGlobalMeta = (o?: any) => {
+  const pctCands = [o?.globalDiscountPercent, o?.orderDiscountPercent, o?.discountPercentGeneral];
+  const amtCands = [o?.globalDiscountAmount, o?.orderDiscountAmount];
+  const baseCands = [o?.globalDiscountBase, o?.orderDiscountBase];
 
-  for (const it of items) {
-    const pid = String(it.productId);
-    const price = Number(it.unitPrice ?? 0);
-    const pct = clampPct(it.discountPercent ?? 0);
-    const key = [pid, price.toFixed(2), pct.toFixed(2)].join("|");
+  const pct = clampPct(Number(pctCands.find((x: any) => typeof x === "number") || 0));
+  const amountRaw = amtCands.find((x: any) => typeof x === "number");
+  const amount = Number.isFinite(amountRaw) ? r2(Number(amountRaw)) : 0;
+  const baseRaw = baseCands.find((x: any) => typeof x === "number");
+  const base = Number.isFinite(baseRaw) ? r2(Number(baseRaw)) : 0;
 
-    if (!map.has(key)) {
-      map.set(key, {
-        ...it,
-        productId: pid,
-        unitPrice: price,
-        discountPercent: pct,
-        quantity: Math.max(1, Math.floor(Number(it.quantity || 1))),
-      });
-    } else {
-      const acc = map.get(key)!;
-      map.set(key, {
-        ...acc,
-        quantity: Math.max(1, Math.floor(acc.quantity + Math.floor(Number(it.quantity || 1)))),
-      });
-    }
-  }
-
-  // devolvemos array con ids nuevos para evitar claves repetidas en el render
-  return Array.from(map.values()).map((r) => ({
-    ...r,
-    id: crypto.randomUUID(),
-  }));
+  return { pct, amount, base };
 };
 
 export default function EditOrderModal({ open, onOpenChange, order, onSave }: Props) {
@@ -105,122 +68,134 @@ export default function EditOrderModal({ open, onOpenChange, order, onSave }: Pr
   const [notes, setNotes] = useState<string>("");
   const [searchOpen, setSearchOpen] = useState(false);
 
+  /** % descuento global (solo este campo queda visible) */
+  const [globalDiscountPercent, setGlobalDiscountPercent] = useState<number>(0);
+
+  /** Cargar pedido en el estado de edición */
   useEffect(() => {
     if (open && order) {
       const mapped: UIItem[] = (order.items ?? []).map((it, idx) => {
-        const unitPrice = Number(it.unitPrice ?? 0); // asumimos SIN IVA
+        const unitPrice = Number(it.unitPrice ?? 0); // SIN IVA — solo lectura
         const quantity = Number(it.quantity ?? 1);
+        // Aproximamos % por ítem a partir del descuento en $ (si no se guardó explícito)
         const discountPercent = amountToPercent(Number(it.discount ?? 0), unitPrice, quantity);
         return {
           id: `${idx}-${it.productId}-${crypto.randomUUID()}`,
-          productId: it.productId,
+          productId: String(it.productId),
           productName: it.productName,
           unitPrice,
           quantity,
           discountPercent,
         };
       });
-
-      // Merge inicial para mostrar todo consolidado
-      setItems(mergeUIItems(mapped));
+      setItems(mapped);
       setNotes(order.notes ?? "");
+
+      const meta = extractGlobalMeta(order as any);
+      setGlobalDiscountPercent(meta.pct); // ← precarga el % que se usó al crear
     }
   }, [open, order]);
 
-  // Totales del pedido
-  const totals = useMemo(() => {
-    return items.reduce(
-      (acc, r) => {
-        const { net, iva, gross } = lineCalc(r);
-        acc.subtotal += net; // sin IVA
-        acc.iva += iva;
-        acc.total += gross;  // con IVA
-        return acc;
-      },
-      { subtotal: 0, iva: 0, total: 0 }
-    );
+  /** Totales en vivo con “no apila” (global solo a líneas sin desc. por ítem) */
+  const computed = useMemo(() => {
+    const per = items.map((r) => lineCalc(r)); // net = base - descPorItem
+    const base = r2(per.reduce((a, x) => a + x.base, 0));
+    const discItems = r2(per.reduce((a, x) => a + x.disc, 0));
+    const netAfterItem = per.map((x) => x.net);
+
+    // Elegibles = líneas con % por ítem === 0
+    const eligibleMask = items.map((r) => (r.discountPercent || 0) === 0);
+    const eligibleNet = r2(netAfterItem.reduce((a, x, idx) => a + (eligibleMask[idx] ? x : 0), 0));
+
+    const gPct = clampPct(globalDiscountPercent);
+    const gAmt = r2(eligibleNet * gPct / 100);
+
+    const subtotal = r2(base - discItems - gAmt);
+    const iva = r2(subtotal * IVA_RATE);
+    const total = r2(subtotal + iva);
+
+    return { base, discItems, eligibleNet, gPct, gAmt, subtotal, iva, total, eligibleMask, netAfterItem };
+  }, [items, globalDiscountPercent]);
+
+  /** Mapa con cantidades ya en el pedido, para pasar al ProductSearchModal */
+  const inOrderMap = useMemo<Record<string, number>>(() => {
+    const m: Record<string, number> = {};
+    for (const r of items) m[r.productId] = (m[r.productId] ?? 0) + Number(r.quantity || 0);
+    return m;
   }, [items]);
 
-  const handleRemove = (rowId: string) => {
-    setItems((prev) => prev.filter((r) => r.id !== rowId));
+  /** Mutadores permitidos (solo cantidad y descuento por ítem) */
+  const setQty = (rowId: string, v: number) => {
+    setItems(prev => prev.map(r => r.id === rowId ? { ...r, quantity: Math.max(1, Math.floor(v || 1)) } : r));
   };
+  const setDiscPct = (rowId: string, v: number) => {
+    setItems(prev => prev.map(r => r.id === rowId ? { ...r, discountPercent: clampPct(v) } : r));
+  };
+  const handleRemove = (rowId: string) => setItems(prev => prev.filter(r => r.id !== rowId));
 
+  /** Agregar producto (precio viene del producto y NO se edita) */
   const handleAddFromPicker = (payload: { product: Product; quantity: number; discountPercent: number }) => {
     const { product: p, quantity, discountPercent } = payload;
     const newRow: UIItem = {
       id: crypto.randomUUID(),
       productId: String(p.id),
       productName: p.name,
-      unitPrice: Number(p.price ?? 0),                 // asumimos que p.price es sin IVA
+      unitPrice: Number(p.price ?? 0), // SIN IVA — solo lectura
       quantity: Math.max(1, Math.floor(quantity || 1)),
       discountPercent: clampPct(discountPercent || 0),
     };
-    setItems((prev) => mergeUIItems([...prev, newRow])); // merge al agregar
-    setSearchOpen(false);
+    setItems(prev => [...prev, newRow]);
   };
 
-  const setQty = (rowId: string, v: number) => {
-    setItems((prev) => {
-      const next = prev.map((r) => (r.id === rowId ? { ...r, quantity: Math.max(1, Math.floor(v || 1)) } : r));
-      return mergeUIItems(next); // merge al cambiar cantidad
-    });
-  };
-
-  const setPrice = (rowId: string, v: number) => {
-    setItems((prev) => {
-      const next = prev.map((r) =>
-        r.id === rowId ? { ...r, unitPrice: Math.max(0, Number.isFinite(v) ? round2(v) : 0) } : r
-      );
-      return mergeUIItems(next); // merge al cambiar precio
-    });
-  };
-
-  const setDiscPct = (rowId: string, v: number) => {
-    setItems((prev) => {
-      const next = prev.map((r) =>
-        r.id === rowId ? { ...r, discountPercent: clampPct(v) } : r
-      );
-      return mergeUIItems(next); // merge al cambiar % desc
-    });
-  };
-
+  /** Guardar con prorrateo global SOLO en elegibles y total CON IVA */
   const save = async () => {
     if (!order) return;
 
-    // Seguridad extra: merge justo antes de construir el DTO
-    const merged = mergeUIItems(items);
+    const per = items.map((r) => lineCalc(r));
+    const itemOwnDisc = per.map((x) => x.base - x.net); // = desc por ítem ($)
+    const eligibleMask = items.map((r) => (r.discountPercent || 0) === 0);
+    const netAfterItem = per.map((x) => x.net);
+    const eligibleNet = r2(netAfterItem.reduce((a, x, idx) => a + (eligibleMask[idx] ? x : 0), 0));
 
-    // Map a tu DTO (nota: discount es $ sin IVA, como ya usabas)
-    const dtoItems: OrderItemDTO[] = merged.map((it) => {
-      const { net } = lineCalc(it); // net = (precio*sin IVA * qty) - descuento
-      const discountAbs = percentToAmount(it.discountPercent, it.unitPrice, it.quantity);
-      return {
-        productId: it.productId,
-        productName: it.productName,
-        unitPrice: it.unitPrice,        // SIN IVA
-        quantity: it.quantity,
-        discount: discountAbs,          // $ de descuento (como antes)
-        // si más adelante querés guardar IVA por línea, podríamos agregar campos si tu DTO los admite
-      };
-    });
+    const gPct = clampPct(globalDiscountPercent);
+    const gAmt = r2(eligibleNet * gPct / 100);
 
-    // ⚠️ Mantengo el total como lo tenías: sumatoria SIN IVA (para no romper backend).
-    // Si querés que 'total' sea CON IVA, reemplazá 'orderTotal' por 'orderTotalWithIva' abajo.
-    const orderTotal = dtoItems.reduce(
+    const share = eligibleNet > 0
+      ? netAfterItem.map((net, idx) => (eligibleMask[idx] ? net / eligibleNet : 0))
+      : items.map(() => 0);
+
+    const generalPerLine = share.map((s) => r2(s * gAmt));
+
+    const dtoItems: OrderItemDTO[] = items.map((it, i) => ({
+      productId: it.productId,
+      productName: it.productName,
+      unitPrice: it.unitPrice, // SIN IVA
+      quantity: it.quantity,
+      discount: r2(itemOwnDisc[i] + generalPerLine[i]),
+    }));
+
+    // Totales del pedido (CON IVA)
+    const orderNet = dtoItems.reduce(
       (acc, it) => acc + it.unitPrice * it.quantity - Number(it.discount ?? 0),
       0
     );
-
-    // Alternativa con IVA (si en algún momento querés):
-    // const orderTotalWithIva = totals.total;
+    const tax = r2(orderNet * IVA_RATE);
+    const gross = r2(orderNet + tax);
 
     const updated: OrderDTO = {
       ...order,
       items: dtoItems,
       notes,
-      total: round2(orderTotal),          // 👈 mantener SIN IVA
-      // total: round2(orderTotalWithIva), // 👈 usar esta línea si querés guardar CON IVA
-    };
+      // metadata para “Ver pedido”
+      globalDiscountPercent: gPct,
+      globalDiscountAmount: gAmt,
+      globalDiscountBase: eligibleNet,
+
+      // Totales normalizados
+      subtotal: r2(orderNet), // s/IVA
+      tax,                    // IVA
+      total: gross,           // c/IVA (para Historial)
+    } as any;
 
     await onSave(updated);
   };
@@ -230,152 +205,177 @@ export default function EditOrderModal({ open, onOpenChange, order, onSave }: Pr
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="w-[96vw] sm:max-w-4xl md:max-w-5xl max-h-[90vh] overflow-hidden">
-          <DialogHeader>
+        <DialogContent className="w-[96vw] sm:max-w-4xl md:max-w-5xl p-0 max-h-[90vh] h-[90vh] flex flex-col" aria-describedby={undefined}>
+          <DialogHeader className="px-6 pt-6">
             <DialogTitle>Editar pedido {order.code ?? "—"}</DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-3">
-            <Label>Notas</Label>
-            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notas del pedido…" />
-          </div>
+          {/* Cabecera: Notas + % descuento general (eliminado el campo de texto) */}
+          <div className="px-6 pb-3 space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="md:col-span-2">
+                <Label className="mb-1 block">Notas</Label>
+                <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notas del pedido…" />
+              </div>
 
-          <div className="border rounded-md">
-            <div className="flex items-center justify-between p-3">
+              <div className="space-y-2">
+                <Label className="mb-1 block">% descuento general</Label>
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  max={100}
+                  step={0.5}
+                  placeholder="0"
+                  value={String(globalDiscountPercent || "")}
+                  onChange={(e) => setGlobalDiscountPercent(clampPct(parseFloat(e.target.value || "0")))}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Items ({items.length})</span>
               <Button size="sm" onClick={() => setSearchOpen(true)}>
                 <Plus className="w-4 h-4 mr-1" />
                 Agregar producto
               </Button>
             </div>
+          </div>
 
-            <ScrollArea className="max-h=[48vh] md:max-h-[60vh]">
-              <table className="w-full text-sm table-fixed">
-                <thead className="sticky top-0 bg-muted/50 backdrop-blur z-10">
-                  <tr className="border-b">
-                    <th className="text-left  px-3 py-2 align-middle">Producto</th>
-                    <th className="text-center px-3 py-2 align-middle w-[12%]">Cant.</th>
-                    <th className="text-right  px-3 py-2 align-middle w-[14%]">Precio (s/IVA)</th>
-                    <th className="text-right  px-3 py-2 align-middle w-[12%]">Desc. %</th>
-                    <th className="text-right  px-3 py-2 align-middle w-[16%]">Subt. s/IVA</th>
-                    <th className="text-right  px-3 py-2 align-middle w-[16%]">Total c/IVA</th>
-                    <th className="text-center px-3 py-2 align-middle w-[9%]">Acción</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((r) => {
-                    const { net, gross } = lineCalc(r);
-                    return (
-                      <tr key={r.id} className="border-b">
-                        <td className="px-3 py-2 align-middle">{r.productName}</td>
+          {/* Tabla scrollable */}
+          <div className="px-6 pb-6 flex-1 min-h-0">
+            <div className="border rounded-md h-full flex flex-col">
+              <div className="min-h-0 flex-1 overflow-hidden">
+                <ScrollArea className="h-full">
+                  <div className="min-w-[820px]">
+                    <table className="w-full text-sm table-fixed">
+                      <thead className="sticky top-0 bg-muted/50 backdrop-blur z-10">
+                        <tr className="border-b">
+                          <th className="text-left  px-3 py-2">Producto</th>
+                          <th className="text-center px-3 py-2 w-[12%]">Cant.</th>
+                          <th className="text-right  px-3 py-2 w-[14%]">Precio (s/IVA)</th>
+                          <th className="text-right  px-3 py-2 w-[12%]">Desc. %</th>
+                          <th className="text-right  px-3 py-2 w-[16%]">Subt. s/IVA</th>
+                          <th className="text-center px-3 py-2 w-[9%]">Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {items.map((r) => {
+                          const { net } = lineCalc(r);
+                          return (
+                            <tr key={r.id} className="border-b">
+                              <td className="px-3 py-2">{r.productName}</td>
 
-                        <td className="px-3 py-2 align-middle">
-                          <div className="flex items-center justify-center">
-                            <Input
-                              className="w-20 text-center"
-                              type="number"
-                              min={1}
-                              value={r.quantity}
-                              onChange={(e) => setQty(r.id, parseInt(e.target.value || "1", 10))}
-                            />
-                          </div>
-                        </td>
+                              <td className="px-3 py-2">
+                                <div className="flex items-center justify-center">
+                                  <Input
+                                    className="w-20 text-center"
+                                    type="number"
+                                    min={1}
+                                    value={r.quantity}
+                                    onChange={(e) => setQty(r.id, parseInt(e.target.value || "1", 10))}
+                                  />
+                                </div>
+                              </td>
 
-                        <td className="px-3 py-2 align-middle">
-                          <div className="flex items-center justify-end">
-                            <Input
-                              className="w-28 text-right"
-                              type="number"
-                              min={0}
-                              step="0.01"
-                              value={r.unitPrice}
-                              onChange={(e) => setPrice(r.id, parseFloat(e.target.value || "0"))}
-                            />
-                          </div>
-                        </td>
+                              {/* Precio solo lectura */}
+                              <td className="px-3 py-2 text-right tabular-nums">
+                                ${r.unitPrice.toFixed(2)}
+                              </td>
 
-                        <td className="px-3 py-2 align-middle">
-                          <div className="flex items-center justify-end">
-                            <Input
-                              className="w-24 text-right"
-                              type="number"
-                              min={0}
-                              max={100}
-                              step="0.5"
-                              value={r.discountPercent}
-                              onChange={(e) => setDiscPct(r.id, parseFloat(e.target.value || "0"))}
-                            />
-                          </div>
-                        </td>
+                              <td className="px-3 py-2">
+                                <div className="flex items-center justify-end">
+                                  <Input
+                                    className="w-24 text-right"
+                                    type="number"
+                                    min={0}
+                                    max={100}
+                                    step={0.5}
+                                    value={r.discountPercent}
+                                    onChange={(e) => setDiscPct(r.id, parseFloat(e.target.value || "0"))}
+                                  />
+                                </div>
+                              </td>
 
-                        <td className="px-3 py-2 align-middle text-right">
-                          ${net.toFixed(2)}
-                        </td>
+                              <td className="px-3 py-2 text-right tabular-nums">${net.toFixed(2)}</td>
 
-                        <td className="px-3 py-2 align-middle text-right font-semibold">
-                          ${gross.toFixed(2)}
-                        </td>
+                              <td className="px-3 py-2 text-center">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="hover:bg-destructive/10 hover:text-destructive"
+                                  onClick={() => handleRemove(r.id)}
+                                  title="Quitar"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {items.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                              Todavía no hay productos en este pedido.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </ScrollArea>
+              </div>
 
-                        <td className="px-3 py-2 align-middle text-center">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="hover:bg-destructive/10 hover:text-destructive"
-                            onClick={() => handleRemove(r.id)}
-                            title="Quitar"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {items.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">
-                        Todavía no hay productos en este pedido.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </ScrollArea>
-
-            <div className="p-3 border-t">
-              <div className="w-full md:w-[420px] ml-auto space-y-1">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Subtotal (s/IVA)</span>
-                  <span>${round2(totals.subtotal).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">IVA (21%)</span>
-                  <span>${round2(totals.iva).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-base font-semibold pt-2 border-t mt-2">
-                  <span>Total (c/IVA)</span>
-                  <span>${round2(totals.total).toFixed(2)}</span>
+              {/* Totales */}
+              <div className="p-3 border-t">
+                <div className="w-full md:w-[460px] ml-auto space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Bruto (s/IVA)</span>
+                    <span>${computed.base.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Descuentos por ítem</span>
+                    <span className="text-destructive">- ${computed.discItems.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Condición de venta ({computed.gPct}%)</span>
+                    <span className="text-destructive">- ${computed.gAmt.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Subtotal (s/IVA)</span>
+                    <span>${computed.subtotal.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">IVA (21%)</span>
+                    <span>${computed.iva.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-base font-semibold pt-2 border-t mt-2">
+                    <span>Total (c/IVA)</span>
+                    <span>${computed.total.toFixed(2)}</span>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-2">
+          {/* Footer */}
+          <div className="px-6 pb-6 flex items-center justify-end gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
-              <X className="w-4 h-4 mr-1" />
-              Cancelar
+              <X className="w-4 h-4 mr-1" /> Cancelar
             </Button>
             <Button onClick={save}>
-              <Save className="w-4 h-4 mr-1" />
-              Guardar cambios
+              <Save className="w-4 h-4 mr-1" /> Guardar cambios
             </Button>
           </div>
         </DialogContent>
       </Dialog>
 
+      {/* Buscador */}
       <ProductSearchModal
         open={searchOpen}
         onOpenChange={setSearchOpen}
         onPick={handleAddFromPicker}
+        inOrder={inOrderMap}
       />
     </>
   );

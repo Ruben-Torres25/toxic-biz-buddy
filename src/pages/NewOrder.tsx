@@ -25,8 +25,13 @@ interface UIOrderItem {
   productName?: string;
   quantity: number;
   unitPrice: number;
-  discountPercent: number; // UI solo (se convierte a $ al enviar)
+  discountPercent: number; // % por ítem (UI)
 }
+
+const clampPct = (n: number) =>
+  Math.min(100, Math.max(0, Number.isFinite(n) ? n : 0));
+const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+const IVA_RATE = 0.21;
 
 const NewOrder = () => {
   const navigate = useNavigate();
@@ -37,8 +42,7 @@ const NewOrder = () => {
 
   // Estado del form
   const [clientId, setClientId] = useState("");
-  const [saleCondition, setSaleCondition] = useState("");
-  const [deliveryDate, setDeliveryDate] = useState<string>("");
+  const [saleDiscountPct, setSaleDiscountPct] = useState<number>(0); // ← % manual (condición de venta)
 
   const [orderItems, setOrderItems] = useState<UIOrderItem[]>([]);
 
@@ -120,8 +124,6 @@ const NewOrder = () => {
   // Agregar desde modal
   const handlePickFromModal = (p: { product: Product; quantity: number; discountPercent: number }) => {
     mergeOrPushItem(p);
-    // no cierres el modal si querés seguir agregando; si preferís cerrarlo, descomentá:
-    // setIsProductModalOpen(false);
   };
 
   // Agregar desde modo avanzado
@@ -142,7 +144,7 @@ const NewOrder = () => {
       let prod: Product | null = null;
 
       try {
-        const exact = await api.get<any>("/products", { sku }); // tu backend ya acepta filtro sku
+        const exact = await api.get<any>("/products", { sku });
         const list = Array.isArray(exact) ? exact : (exact?.items ?? exact?.data ?? exact?.results ?? []);
         if (Array.isArray(list) && list.length > 0) {
           const found = list.find((p: any) => String(p.sku).toUpperCase() === sku.toUpperCase());
@@ -152,7 +154,6 @@ const NewOrder = () => {
       } catch {}
 
       if (!prod) {
-        // Plan B: comodín
         const alt = await api.get<any>("/products", { sku: `${sku}%` });
         const list = Array.isArray(alt) ? alt : (alt?.items ?? alt?.data ?? alt?.results ?? []);
         if (Array.isArray(list) && list.length > 0) {
@@ -165,7 +166,7 @@ const NewOrder = () => {
         return;
       }
 
-      // Clampear por disponibilidad visible (stock - reservado - ya en pedido)
+      // Clampear por disponibilidad visible
       const baseAvail =
         (typeof prod.available === "number"
           ? prod.available
@@ -180,7 +181,7 @@ const NewOrder = () => {
 
       mergeOrPushItem({ product: prod, quantity: finalQty, discountPercent: disc });
 
-      // ✅ Reset campos del avanzado (así no “arrastra” cantidad anterior)
+      // Reset avanzado
       setAdvSku("");
       setAdvQty(1);
       setAdvDiscPct(0);
@@ -199,30 +200,53 @@ const NewOrder = () => {
     setOrderItems((items) => items.filter((i) => i.id !== id));
   };
 
-  // Cálculos
+  // ========= Cálculos =========
   const subtotal = useMemo(
     () => orderItems.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0),
     [orderItems]
   );
 
-  const productDiscounts = useMemo(
-    () =>
-      orderItems.reduce((sum, i) => {
-        const line = i.quantity * i.unitPrice;
-        return sum + line * (i.discountPercent / 100);
-      }, 0),
+  const basePerLine = useMemo(
+    () => orderItems.map((i) => i.quantity * i.unitPrice),
     [orderItems]
   );
 
-  const generalDiscount = useMemo(() => {
-    return saleCondition === "con-descuento"
-      ? (subtotal - productDiscounts) * 0.1
-      : 0;
-  }, [saleCondition, subtotal, productDiscounts]);
+  const itemDiscPerLine = useMemo(
+    () => orderItems.map((i, idx) => basePerLine[idx] * (i.discountPercent / 100)),
+    [orderItems, basePerLine]
+  );
 
+  const productDiscounts = useMemo(
+    () => r2(itemDiscPerLine.reduce((a, n) => a + n, 0)),
+    [itemDiscPerLine]
+  );
+
+  // "No apila": aplicar global SOLO a líneas sin descuento por ítem
+  const netAfterItemPerLine = useMemo(
+    () => basePerLine.map((b, idx) => r2(b - itemDiscPerLine[idx])),
+    [basePerLine, itemDiscPerLine]
+  );
+
+  const eligibleMask = useMemo(
+    () => orderItems.map((i) => (i.discountPercent || 0) === 0),
+    [orderItems]
+  );
+
+  const eligibleNetAfterItem = useMemo(
+    () => r2(netAfterItemPerLine.reduce((a, x, idx) => a + (eligibleMask[idx] ? x : 0), 0)),
+    [netAfterItemPerLine, eligibleMask]
+  );
+
+  const generalPct = clampPct(saleDiscountPct); // % manual ingresado
+  const generalAmount = useMemo(
+    () => r2(eligibleNetAfterItem * (generalPct / 100)),
+    [eligibleNetAfterItem, generalPct]
+  );
+
+  // Neto s/IVA
   const total = useMemo(
-    () => subtotal - productDiscounts - generalDiscount,
-    [subtotal, productDiscounts, generalDiscount]
+    () => r2(subtotal - productDiscounts - generalAmount),
+    [subtotal, productDiscounts, generalAmount]
   );
 
   const handleSubmit = async () => {
@@ -243,23 +267,47 @@ const NewOrder = () => {
       return;
     }
 
-    // Convertir % a monto por línea y agregar productName (OrderItemDTO)
-    const items: OrderItemDTO[] = orderItems.map((i) => {
-      const line = i.unitPrice * i.quantity;
-      const discountAmount = line * (i.discountPercent / 100);
+    // ===== DTO: prorratear general SÓLO entre elegibles =====
+    const share = eligibleNetAfterItem > 0
+      ? netAfterItemPerLine.map((net, idx) => (eligibleMask[idx] ? net / eligibleNetAfterItem : 0))
+      : orderItems.map(() => 0);
+
+    const generalPerLine = share.map((s) => r2(s * generalAmount));
+
+    const items: OrderItemDTO[] = orderItems.map((i, idx) => {
+      const discountOwn = itemDiscPerLine[idx];
+      const discountTotalLine = r2(discountOwn + generalPerLine[idx]);
       return {
         productId: i.productId,
         productName: i.productName ?? "",
         unitPrice: i.unitPrice,
         quantity: i.quantity,
-        discount: Number(discountAmount.toFixed(2)),
+        discount: discountTotalLine,
       };
     });
 
-    const payload: CreateOrderDTO = {
+    // ✅ Guardar total CON IVA
+    const netNoIVA = r2(total);
+    const tax = r2(netNoIVA * IVA_RATE);
+    const gross = r2(netNoIVA + tax);
+
+    const payload: CreateOrderDTO & {
+      globalDiscountPercent?: number;
+      globalDiscountAmount?: number;
+      globalDiscountBase?: number;
+      subtotal?: number;
+      tax?: number;
+      total?: number;
+    } = {
       customerId: clientId,
       items,
-      // notes: deliveryDate ? `Entrega: ${deliveryDate}` : undefined,
+      globalDiscountPercent: generalPct,
+      globalDiscountAmount: generalAmount,
+      globalDiscountBase: eligibleNetAfterItem,
+      // 👇 nuevos campos para que el Historial tenga el total con IVA
+      subtotal: netNoIVA, // s/IVA
+      tax,                // IVA
+      total: gross,       // c/IVA
     };
 
     try {
@@ -318,29 +366,25 @@ const NewOrder = () => {
                   </Select>
                 </div>
 
+                {/* Campo numérico para % de descuento manual */}
                 <div>
-                  <Label htmlFor="condition">Condición de Venta</Label>
-                  <Select value={saleCondition} onValueChange={setSaleCondition}>
-                    <SelectTrigger id="condition">
-                      <SelectValue placeholder="Seleccionar condición" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="sin-descuento">Sin Descuento</SelectItem>
-                      <SelectItem value="con-descuento">
-                        Con Descuento (10%)
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <Label htmlFor="date">Fecha de Entrega</Label>
-                  <Input
-                    id="date"
-                    type="date"
-                    value={deliveryDate}
-                    onChange={(e) => setDeliveryDate(e.target.value)}
-                  />
+                  <Label htmlFor="conditionPct">Condición de Venta (Descuento %)</Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="conditionPct"
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={0.5}
+                      placeholder="0"
+                      value={String(saleDiscountPct ?? "")}
+                      onChange={(e) => setSaleDiscountPct(clampPct(parseFloat(e.target.value || "0")))}
+                    />
+                    <span className="text-sm text-muted-foreground">%</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Se aplica solo a los ítems sin descuento por ítem.
+                  </p>
                 </div>
               </CardContent>
             </Card>
@@ -454,10 +498,10 @@ const NewOrder = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {orderItems.map((item) => {
-                          const line = item.quantity * item.unitPrice;
-                          const discountAmount = line * (item.discountPercent / 100);
-                          const lineTotal = line - discountAmount;
+                        {orderItems.map((item, idx) => {
+                          const line = basePerLine[idx];
+                          const discountAmount = itemDiscPerLine[idx];
+                          const lineTotal = r2(line - discountAmount);
 
                           return (
                             <tr key={item.id} className="border-b">
@@ -510,20 +554,20 @@ const NewOrder = () => {
                   {productDiscounts > 0 && (
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">
-                        Descuentos de productos:
+                        Descuentos por ítem:
                       </span>
                       <span className="text-destructive">
                         -${productDiscounts.toFixed(2)}
                       </span>
                     </div>
                   )}
-                  {generalDiscount > 0 && (
+                  {generalPct > 0 && (
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">
-                        Descuento general (10%):
+                        Condición de venta ({generalPct}%):
                       </span>
                       <span className="text-destructive">
-                        -${generalDiscount.toFixed(2)}
+                        -${generalAmount.toFixed(2)}
                       </span>
                     </div>
                   )}

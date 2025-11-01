@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,53 +6,95 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "@/hooks/use-toast";
-import { Truck, Building2, User, MapPin, Phone, Mail, Package, CreditCard, Clock, StickyNote } from "lucide-react";
+import { Truck, Building2, User, MapPin, Phone, Mail, CreditCard, StickyNote, BadgeCheck } from "lucide-react";
+import { SuppliersAPI } from "@/services/suppliers.api";
+import { Switch } from "@/components/ui/switch";
 
-interface Supplier {
+type EditableSupplier = {
   id: string;
   name: string;
-  ruc: string;
-  contact: string;
-  address: string;
-  phone: string;
-  email: string;
-  products: string;
-  paymentTerms?: string;
-  deliveryTime?: string;
-  notes?: string;
-}
+  alias?: string | null;
+  cuit?: string | null;
+  contact?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  notes?: string | null;
+  active?: boolean | null; // ⇠ NUEVO
+};
 
 interface EditSupplierModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  supplier: Supplier | null;
-  onSave: (supplier: Supplier) => void;
+  // Puede venir de la tabla normalizada (UISupplier)
+  supplier: Partial<EditableSupplier> | null;
+  onSave: (updated: EditableSupplier) => void; // el padre invalida cache
 }
 
 export function EditSupplierModal({ open, onOpenChange, supplier, onSave }: EditSupplierModalProps) {
-  const [editedSupplier, setEditedSupplier] = useState<Supplier | null>(null);
+  const [model, setModel] = useState<EditableSupplier | null>(null);
+  const [saving, setSaving] = useState(false);
 
+  // hidratar el formulario cuando cambie el supplier
   useEffect(() => {
-    if (supplier) {
-      setEditedSupplier({ ...supplier });
+    if (!supplier) {
+      setModel(null);
+      return;
     }
+    setModel({
+      id: String(supplier.id ?? ""),
+      name: String(supplier.name ?? ""),
+      alias: (supplier.alias ?? null) as string | null,
+      cuit: (supplier.cuit ?? null) as string | null,
+      contact: (supplier.contact ?? null) as string | null,
+      address: (supplier.address ?? null) as string | null,
+      phone: (supplier.phone ?? null) as string | null,
+      email: (supplier.email ?? null) as string | null,
+      notes: (supplier.notes ?? null) as string | null,
+      active: typeof supplier.active === "boolean" ? supplier.active : true, // por defecto activo
+    });
   }, [supplier]);
 
-  if (!supplier || !editedSupplier) return null;
+  if (!supplier || !model) return null;
 
-  const handleSave = () => {
-    if (editedSupplier) {
-      onSave(editedSupplier);
+  const set = <K extends keyof EditableSupplier>(key: K, value: EditableSupplier[K]) =>
+    setModel((m) => (m ? { ...m, [key]: value } : m));
+
+  const handleSave = async () => {
+    if (!model.name.trim()) {
+      toast({ title: "Falta el nombre", description: "El campo Nombre es obligatorio.", variant: "destructive" });
+      return;
+    }
+    try {
+      setSaving(true);
+      const payload = {
+        name: model.name.trim(),
+        alias: model.alias?.trim?.() || null,
+        cuit: model.cuit?.trim?.() || null,
+        contact: model.contact?.trim?.() || null,
+        phone: model.phone?.trim?.() || null,
+        email: model.email?.trim?.() || null,
+        address: model.address?.trim?.() || null,
+        notes: model.notes?.trim?.() || null,
+        active: !!model.active, // ⇠ enviar estado
+      };
+      const updated = await SuppliersAPI.update(model.id, payload);
+      onSave(updated);
       toast({
         title: "Proveedor actualizado",
-        description: `El proveedor ${editedSupplier.name} ha sido actualizado exitosamente.`,
+        description: `Se guardaron los cambios de “${updated?.name ?? model.name}”.`,
       });
       onOpenChange(false);
+    } catch (e: any) {
+      const msg = e?.response?.data?.message ?? e?.message ?? "Error desconocido";
+      toast({ title: "No se pudo actualizar", description: String(msg), variant: "destructive" });
+    } finally {
+      setSaving(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(o) => !saving && onOpenChange(o)}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-xl font-semibold">
@@ -62,46 +104,74 @@ export function EditSupplierModal({ open, onOpenChange, supplier, onSave }: Edit
             Editar Proveedor
           </DialogTitle>
         </DialogHeader>
-        
+
         <div className="space-y-6">
+          {/* Estado (activar / desactivar) */}
+          <div className="flex items-center justify-between rounded-lg border p-3 bg-background/60">
+            <div>
+              <p className="text-sm font-medium">Estado del proveedor</p>
+              <p className="text-xs text-muted-foreground">
+                {model.active ? "El proveedor está activo y puede usarse en registros." : "Proveedor inactivo. No se sugerirá por defecto."}
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span
+                className={`text-xs font-medium px-2 py-1 rounded ${
+                  model.active ? "bg-emerald-500/10 text-emerald-600" : "bg-rose-500/10 text-rose-600"
+                }`}
+              >
+                {model.active ? "Activo" : "Inactivo"}
+              </span>
+              <Switch
+                checked={!!model.active}
+                onCheckedChange={(v) => set("active", Boolean(v))}
+                disabled={saving}
+                aria-label="Cambiar estado del proveedor"
+              />
+            </div>
+          </div>
+
           {/* Información Principal */}
           <div className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="name" className="flex items-center gap-2">
                 <Building2 className="w-4 h-4 text-muted-foreground" />
-                Nombre del Proveedor
+                Nombre del Proveedor *
               </Label>
               <Input
                 id="name"
-                value={editedSupplier.name}
-                onChange={(e) => setEditedSupplier({...editedSupplier, name: e.target.value})}
+                value={model.name}
+                onChange={(e) => set("name", e.target.value)}
                 className="bg-background"
+                disabled={saving}
               />
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="ruc" className="flex items-center gap-2">
-                  <CreditCard className="w-4 h-4 text-muted-foreground" />
-                  RUC
+                <Label htmlFor="alias" className="flex items-center gap-2">
+                  <BadgeCheck className="w-4 h-4 text-muted-foreground" />
+                  Alias
                 </Label>
                 <Input
-                  id="ruc"
-                  value={editedSupplier.ruc}
-                  onChange={(e) => setEditedSupplier({...editedSupplier, ruc: e.target.value})}
+                  id="alias"
+                  value={model.alias ?? ""}
+                  onChange={(e) => set("alias", e.target.value)}
                   className="bg-background"
+                  disabled={saving}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="contact" className="flex items-center gap-2">
-                  <User className="w-4 h-4 text-muted-foreground" />
-                  Persona de Contacto
+                <Label htmlFor="cuit" className="flex items-center gap-2">
+                  <CreditCard className="w-4 h-4 text-muted-foreground" />
+                  CUIT
                 </Label>
                 <Input
-                  id="contact"
-                  value={editedSupplier.contact}
-                  onChange={(e) => setEditedSupplier({...editedSupplier, contact: e.target.value})}
+                  id="cuit"
+                  value={model.cuit ?? ""}
+                  onChange={(e) => set("cuit", e.target.value)}
                   className="bg-background"
+                  disabled={saving}
                 />
               </div>
             </div>
@@ -112,15 +182,30 @@ export function EditSupplierModal({ open, onOpenChange, supplier, onSave }: Edit
           {/* Información de Contacto */}
           <div className="space-y-4">
             <div className="space-y-2">
+              <Label htmlFor="contact" className="flex items-center gap-2">
+                <User className="w-4 h-4 text-muted-foreground" />
+                Persona de Contacto
+              </Label>
+            <Input
+                id="contact"
+                value={model.contact ?? ""}
+                onChange={(e) => set("contact", e.target.value)}
+                className="bg-background"
+                disabled={saving}
+              />
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="address" className="flex items-center gap-2">
                 <MapPin className="w-4 h-4 text-muted-foreground" />
                 Dirección
               </Label>
               <Input
                 id="address"
-                value={editedSupplier.address}
-                onChange={(e) => setEditedSupplier({...editedSupplier, address: e.target.value})}
+                value={model.address ?? ""}
+                onChange={(e) => set("address", e.target.value)}
                 className="bg-background"
+                disabled={saving}
               />
             </div>
 
@@ -132,9 +217,10 @@ export function EditSupplierModal({ open, onOpenChange, supplier, onSave }: Edit
                 </Label>
                 <Input
                   id="phone"
-                  value={editedSupplier.phone}
-                  onChange={(e) => setEditedSupplier({...editedSupplier, phone: e.target.value})}
+                  value={model.phone ?? ""}
+                  onChange={(e) => set("phone", e.target.value)}
                   className="bg-background"
+                  disabled={saving}
                 />
               </div>
               <div className="space-y-2">
@@ -145,9 +231,10 @@ export function EditSupplierModal({ open, onOpenChange, supplier, onSave }: Edit
                 <Input
                   id="email"
                   type="email"
-                  value={editedSupplier.email}
-                  onChange={(e) => setEditedSupplier({...editedSupplier, email: e.target.value})}
+                  value={model.email ?? ""}
+                  onChange={(e) => set("email", e.target.value)}
                   className="bg-background"
+                  disabled={saving}
                 />
               </div>
             </div>
@@ -155,75 +242,29 @@ export function EditSupplierModal({ open, onOpenChange, supplier, onSave }: Edit
 
           <Separator />
 
-          {/* Productos */}
+          {/* Notas */}
           <div className="space-y-2">
-            <Label htmlFor="products" className="flex items-center gap-2">
-              <Package className="w-4 h-4 text-muted-foreground" />
-              Productos que Suministra
+            <Label htmlFor="notes" className="flex items-center gap-2">
+              <StickyNote className="w-4 h-4 text-muted-foreground" />
+              Notas
             </Label>
             <Textarea
-              id="products"
-              value={editedSupplier.products}
-              onChange={(e) => setEditedSupplier({...editedSupplier, products: e.target.value})}
+              id="notes"
+              value={model.notes ?? ""}
+              onChange={(e) => set("notes", e.target.value)}
               className="bg-background min-h-[80px]"
+              disabled={saving}
+              placeholder="Opcional"
             />
-          </div>
-
-          <Separator />
-
-          {/* Información Adicional */}
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="paymentTerms" className="flex items-center gap-2">
-                  <CreditCard className="w-4 h-4 text-muted-foreground" />
-                  Condiciones de Pago
-                </Label>
-                <Input
-                  id="paymentTerms"
-                  value={editedSupplier.paymentTerms || ""}
-                  onChange={(e) => setEditedSupplier({...editedSupplier, paymentTerms: e.target.value})}
-                  className="bg-background"
-                  placeholder="Opcional"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="deliveryTime" className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-muted-foreground" />
-                  Tiempo de Entrega
-                </Label>
-                <Input
-                  id="deliveryTime"
-                  value={editedSupplier.deliveryTime || ""}
-                  onChange={(e) => setEditedSupplier({...editedSupplier, deliveryTime: e.target.value})}
-                  className="bg-background"
-                  placeholder="Opcional"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="notes" className="flex items-center gap-2">
-                <StickyNote className="w-4 h-4 text-muted-foreground" />
-                Notas
-              </Label>
-              <Textarea
-                id="notes"
-                value={editedSupplier.notes || ""}
-                onChange={(e) => setEditedSupplier({...editedSupplier, notes: e.target.value})}
-                className="bg-background min-h-[60px]"
-                placeholder="Opcional"
-              />
-            </div>
           </div>
         </div>
 
         <DialogFooter className="mt-6">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
             Cancelar
           </Button>
-          <Button onClick={handleSave}>
-            Guardar Cambios
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? "Guardando..." : "Guardar Cambios"}
           </Button>
         </DialogFooter>
       </DialogContent>

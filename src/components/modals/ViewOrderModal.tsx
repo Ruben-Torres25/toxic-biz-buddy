@@ -9,19 +9,18 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { OrderDTO as Order } from "@/types/domain";
 import { CheckCircle, Clock, XCircle, Copy, RotateCcw } from "lucide-react";
 import CreateCreditNoteModal from "@/components/modals/CreateCreditNoteModal";
 import { toast } from "@/hooks/use-toast";
-
-// ⬇️ NUEVO: importar OrdersAPI para refrescar el pedido desde el backend
 import { OrdersAPI } from "@/services/orders.api";
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   order: Order | null;
-  onSoftRefresh?: (orderId: string) => Promise<void> | void; // inyectado por el padre (opcional)
+  onSoftRefresh?: (orderId: string) => Promise<void> | void;
 };
 
 const IVA_RATE = 0.21;
@@ -79,7 +78,6 @@ const StatusBadge: React.FC<{ status?: string }> = ({ status }) => {
   }
 };
 
-/** Cuánto queda por devolver en total */
 const remainingReturnableQty = (order?: Order | null) => {
   const items = Array.isArray((order as any)?.items) ? (order as any).items : [];
   return items.reduce((acc: number, it: any) => {
@@ -93,37 +91,39 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order, onS
   const [creditOpen, setCreditOpen] = React.useState(false);
   const didInitialRefresh = React.useRef(false);
 
-  // ⬇️ NUEVO: estado interno que SIEMPRE se usa para renderizar
   const [currentOrder, setCurrentOrder] = React.useState<Order | null>(order ?? null);
 
-  // Mantener currentOrder sincronizado cuando cambie la prop 'order'
+  // sincroniza con la prop
   React.useEffect(() => {
     setCurrentOrder(order ?? null);
   }, [order]);
 
   const orderId = currentOrder?.id ?? order?.id ?? null;
 
-  // ⬇️ NUEVO: refresco robusto desde backend + callback del padre (si existe)
   const softRefresh = React.useCallback(
     async (id?: string | null) => {
       const targetId = id ?? orderId;
       if (!targetId) return;
       try {
-        // 1) pedir al backend el pedido actualizado
         const fresh = await OrdersAPI.getById(targetId);
         if (fresh) setCurrentOrder(fresh);
-      } catch (e) {
-        // si falla, no rompemos el flujo
-      }
+      } catch {}
       try {
-        // 2) avisar al padre (por si tiene su propia cache/lista)
         await onSoftRefresh?.(targetId);
       } catch {}
     },
     [orderId, onSoftRefresh]
   );
 
-  // Refrescar automáticamente al abrir (una vez) si no está abierto el modal de NC
+  // si cambia el pedido mientras el modal está abierto, forzamos un nuevo refresh
+  React.useEffect(() => {
+    if (open) {
+      didInitialRefresh.current = false;
+      if (orderId) softRefresh(orderId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderId]);
+
   React.useEffect(() => {
     if (!open) {
       didInitialRefresh.current = false;
@@ -135,7 +135,6 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order, onS
     }
   }, [open, creditOpen, softRefresh, orderId]);
 
-  // Derivados para render
   const customer =
     (currentOrder?.customer && typeof currentOrder.customer === "object" && currentOrder.customer) || null;
 
@@ -147,24 +146,46 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order, onS
   const rows = items.map((it: any) => {
     const unitPrice = Number(it.unitPrice ?? 0);
     const qty = Number(it.quantity ?? 0);
-    const discount = Number(it.discount ?? 0);
+    const discount = Number(it.discount ?? 0); // prorrateado (ítem + global) desde backend
     const base = unitPrice * qty;
-    const discFrac = base > 0 ? discount / base : 0;
     const net = r2(base - discount);
     const iva = r2(net * IVA_RATE);
     const gross = r2(net + iva);
-    return { it, unitPrice, qty, base, discount, discFrac, net, iva, gross };
+    return { it, unitPrice, qty, base, discount, net, iva, gross };
   });
 
-  // Totales calculados localmente (fallback)
+  // ==== Totales y separación ítem vs condición de venta ====
   const brutoSinIVA = r2(rows.reduce((a, x) => a + x.base, 0));
-  const descuentos = r2(rows.reduce((a, x) => a + x.discount, 0));
-  const subtotalSinIVA = r2(rows.reduce((a, x) => a + x.net, 0));
-  const ivaTotal = r2(rows.reduce((a, x) => a + x.iva, 0));
-  const totalConIVA = r2(rows.reduce((a, x) => a + x.gross, 0));
+  const descuentosTotal = r2(rows.reduce((a, x) => a + x.discount, 0));
 
-  // ⬇️ NUEVO: si el backend ya devuelve el total neteado por NC, lo priorizamos
-  const displayedTotal = (currentOrder as any)?.total ?? totalConIVA;
+  // Tomamos metadata si existe
+  const metaPct = Number((currentOrder as any)?.globalDiscountPercent);
+  const metaAmt = Number((currentOrder as any)?.globalDiscountAmount);
+  const metaBase = Number((currentOrder as any)?.globalDiscountBase);
+
+  let condicionVentaMonto = 0;
+  if (Number.isFinite(metaAmt) && metaAmt > 0) {
+    condicionVentaMonto = r2(metaAmt);
+  } else if (Number.isFinite(metaPct) && Number.isFinite(metaBase) && metaPct > 0 && metaBase > 0) {
+    condicionVentaMonto = r2(metaBase * (metaPct / 100));
+  } else if (Number.isFinite(metaPct) && metaPct > 0) {
+    // Último recurso: si sólo tenemos %, asumimos que todo lo descontado es global.
+    condicionVentaMonto = descuentosTotal;
+  } else {
+    condicionVentaMonto = 0;
+  }
+
+  const descuentosPorItem = Math.max(0, r2(descuentosTotal - condicionVentaMonto));
+
+  const condPctToShow = Number.isFinite(metaPct) && metaPct >= 0 ? r2(metaPct) : (
+    brutoSinIVA > 0 ? r2((condicionVentaMonto / brutoSinIVA) * 100) : 0
+  );
+
+  const subtotalSinIVA = r2(brutoSinIVA - descuentosPorItem - condicionVentaMonto);
+  const ivaTotal = r2(subtotalSinIVA * IVA_RATE);
+  const totalConIVA = r2(subtotalSinIVA + ivaTotal);
+
+  const displayedTotal = totalConIVA;
 
   const canOpenCredit =
     !!currentOrder &&
@@ -183,7 +204,8 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order, onS
         customer?.phone ? `Tel.: ${customer.phone}` : null,
         "",
         `Bruto (s/IVA): ${fmtMoney(brutoSinIVA)}`,
-        `Descuentos: - ${fmtMoney(descuentos)}`,
+        `Descuentos por ítem: ${fmtMoney(descuentosPorItem)}`,
+        `Condición de venta (${condPctToShow}%): - ${fmtMoney(condicionVentaMonto)}`,
         `Subtotal (s/IVA): ${fmtMoney(subtotalSinIVA)}`,
         `IVA (21%): ${fmtMoney(ivaTotal)}`,
         `Total (c/IVA): ${fmtMoney(displayedTotal)}`,
@@ -195,11 +217,12 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order, onS
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
+      {/* Contenedor flexible: header y footer fijos, contenido scrolleable */}
       <DialogContent
         aria-describedby={undefined}
-        className="w-[98vw] sm:max-w-5xl lg:max-w-6xl max-h-[92vh] p-0"
+        className="w-[98vw] sm:max-w-5xl lg:max-w-6xl p-0 h-[92vh] max-h-[92vh] flex flex-col"
       >
-        {/* Header */}
+        {/* Header fijo */}
         <div className="border-b px-4 sm:px-6 py-4">
           <DialogHeader className="p-0">
             <DialogTitle className="tracking-tight">
@@ -210,12 +233,7 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order, onS
             </DialogDescription>
             <div className="mt-2 flex items-center justify-end gap-2">
               {canOpenCredit && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCreditOpen(true)}
-                  title="Generar Nota de Crédito"
-                >
+                <Button variant="outline" size="sm" onClick={() => setCreditOpen(true)} title="Generar Nota de Crédito">
                   <RotateCcw className="w-4 h-4 mr-2" />
                   Devolver / NC
                 </Button>
@@ -229,127 +247,138 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order, onS
         </div>
 
         {/* Contenido scrolleable */}
-        <div className="overflow-y-auto px-4 sm:px-6 py-4 space-y-4 max-h-[calc(92vh-5.25rem)]">
-          {/* Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="rounded-lg border p-3">
-              <div className="text-xs text-muted-foreground">Estado</div>
-              <div className="mt-1"><StatusBadge status={currentOrder?.status} /></div>
-            </div>
+        <div className="px-4 sm:px-6 py-4 flex-1 min-h-0 flex flex-col">
+          <ScrollArea className="h-full">
+            <div className="space-y-4 pr-1">
+              {/* Cards */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-lg border p-3">
+                  <div className="text-xs text-muted-foreground">Estado</div>
+                  <div className="mt-1"><StatusBadge status={currentOrder?.status} /></div>
+                </div>
 
-            <div className="rounded-lg border p-3">
-              <div className="text-xs text-muted-foreground">Fecha</div>
-              <div className="mt-1 text-foreground tabular-nums">{created}</div>
-            </div>
+                <div className="rounded-lg border p-3">
+                  <div className="text-xs text-muted-foreground">Fecha</div>
+                  <div className="mt-1 text-foreground tabular-nums">{created}</div>
+                </div>
 
-            <div className="rounded-lg border p-3 col-span-2 md:col-span-1">
-              <div className="text-xs text-muted-foreground">Cliente</div>
-              <div className="mt-1 text-foreground truncate" title={customer?.name ?? "Sin cliente"}>
-                {customer?.name ?? "Sin cliente"}
+                <div className="rounded-lg border p-3 col-span-2 md:col-span-1">
+                  <div className="text-xs text-muted-foreground">Cliente</div>
+                  <div className="mt-1 text-foreground truncate" title={customer?.name ?? "Sin cliente"}>
+                    {customer?.name ?? "Sin cliente"}
+                  </div>
+                  {(customer?.email || customer?.phone) && (
+                    <div className="mt-1 text-[12px] text-muted-foreground space-y-0.5">
+                      {customer?.email && <div className="truncate" title={customer.email}>{customer.email}</div>}
+                      {customer?.phone && <div className="truncate" title={customer.phone}>{customer.phone}</div>}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-lg border p-3 bg-muted/40">
+                  <div className="text-xs text-muted-foreground">Total (c/IVA)</div>
+                  <div className="mt-1 font-semibold text-foreground tabular-nums">{fmtMoney(displayedTotal)}</div>
+                </div>
               </div>
-              {(customer?.email || customer?.phone) && (
-                <div className="mt-1 text-[12px] text-muted-foreground space-y-0.5">
-                  {customer?.email && <div className="truncate" title={customer.email}>{customer.email}</div>}
-                  {customer?.phone && <div className="truncate" title={customer.phone}>{customer.phone}</div>}
+
+              {/* Tabla de ítems */}
+              <div className="rounded-lg border">
+                <div className="p-3 border-b">
+                  <div className="font-medium">Ítems</div>
+                  <div className="text-xs text-muted-foreground">
+                    {rows.length} {rows.length === 1 ? "item" : "items"}
+                  </div>
+                </div>
+
+                <div className="overflow-auto">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+                      <tr className="border-b">
+                        <th className="text-left  p-2 text-muted-foreground font-medium">Producto</th>
+                        <th className="text-right p-2 text-muted-foreground font-medium">Precio (s/IVA)</th>
+                        <th className="text-center p-2 text-muted-foreground font-medium">Cant.</th>
+                        <th className="text-right p-2 text-muted-foreground font-medium">Desc. (%)</th>
+                        <th className="text-right p-2 text-muted-foreground font-medium">Desc. ($)</th>
+                        <th className="text-right p-2 text-muted-foreground font-medium">Subt. (s/IVA)</th>
+                        <th className="text-right p-2 text-muted-foreground font-medium">IVA</th>
+                        <th className="text-right p-2 text-muted-foreground font-medium">Total (c/IVA)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="[&>tr:nth-child(even)]:bg-muted/20">
+                      {rows.length === 0 && (
+                        <tr>
+                          <td className="p-4 text-center text-muted-foreground" colSpan={8}>
+                            Sin ítems
+                          </td>
+                        </tr>
+                      )}
+                      {rows.map(({ it, unitPrice, qty, base, discount, net, iva, gross }: any) => {
+                        const discPct = base > 0 ? (discount / base) * 100 : 0;
+                        return (
+                          <tr key={it.id} className="border-b last:border-b-0">
+                            <td className="p-2 align-middle">{it.productName ?? it.product?.name ?? "—"}</td>
+                            <td className="p-2 align-middle text-right tabular-nums">{fmtMoney(unitPrice)}</td>
+                            <td className="p-2 align-middle text-center tabular-nums">{qty}</td>
+                            <td className="p-2 align-middle text-right tabular-nums">
+                              {discPct > 0 ? `${discPct.toFixed(2)}%` : <span className="text-muted-foreground">—</span>}
+                            </td>
+                            <td className="p-2 align-middle text-right tabular-nums">
+                              {discount > 0 ? fmtMoney(discount) : <span className="text-muted-foreground">—</span>}
+                            </td>
+                            <td className="p-2 align-middle text-right tabular-nums">{fmtMoney(net)}</td>
+                            <td className="p-2 align-middle text-right tabular-nums">{fmtMoney(iva)}</td>
+                            <td className="p-2 align-middle text-right font-medium tabular-nums">{fmtMoney(gross)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Totales */}
+                <div className="p-3 border-t">
+                  <div className="flex justify-end">
+                    <div className="w-full sm:w-[460px] space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Bruto (s/IVA)</span>
+                        <span className="tabular-nums">{fmtMoney(brutoSinIVA)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Descuentos por ítem</span>
+                        <span className="text-destructive tabular-nums">- {fmtMoney(descuentosPorItem)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Condición de venta ({condPctToShow.toFixed(0)}%)</span>
+                        <span className="text-destructive tabular-nums">- {fmtMoney(condicionVentaMonto)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Subtotal (s/IVA)</span>
+                        <span className="tabular-nums">{fmtMoney(subtotalSinIVA)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">IVA (21%)</span>
+                        <span className="tabular-nums">{fmtMoney(ivaTotal)}</span>
+                      </div>
+                      <div className="flex justify-between pt-2 border-t mt-2">
+                        <span className="font-semibold">Total (c/IVA)</span>
+                        <span className="font-semibold tabular-nums">{fmtMoney(displayedTotal)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {(currentOrder as any)?.notes && (
+                <div className="rounded-lg border p-3">
+                  <div className="text-xs text-muted-foreground mb-1">Notas</div>
+                  <div className="whitespace-pre-wrap text-sm">{(currentOrder as any).notes}</div>
                 </div>
               )}
             </div>
-
-            <div className="rounded-lg border p-3 bg-muted/40">
-              <div className="text-xs text-muted-foreground">Total (c/IVA)</div>
-              <div className="mt-1 font-semibold text-foreground tabular-nums">{fmtMoney(displayedTotal)}</div>
-            </div>
-          </div>
-
-          {/* Tabla de ítems */}
-          <div className="rounded-lg border">
-            <div className="p-3 border-b">
-              <div className="font-medium">Ítems</div>
-              <div className="text-xs text-muted-foreground">
-                {rows.length} {rows.length === 1 ? "item" : "items"}
-              </div>
-            </div>
-
-            <div className="overflow-auto max-h-[60vh]">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-                  <tr className="border-b">
-                    <th className="text-left  p-2 text-muted-foreground font-medium">Producto</th>
-                    <th className="text-right p-2 text-muted-foreground font-medium">Precio (s/IVA)</th>
-                    <th className="text-center p-2 text-muted-foreground font-medium">Cant.</th>
-                    <th className="text-right p-2 text-muted-foreground font-medium">Desc. (%)</th>
-                    <th className="text-right p-2 text-muted-foreground font-medium">Desc. ($)</th>
-                    <th className="text-right p-2 text-muted-foreground font-medium">Subt. (s/IVA)</th>
-                    <th className="text-right p-2 text-muted-foreground font-medium">IVA</th>
-                    <th className="text-right p-2 text-muted-foreground font-medium">Total (c/IVA)</th>
-                  </tr>
-                </thead>
-                <tbody className="[&>tr:nth-child(even)]:bg-muted/20">
-                  {rows.length === 0 && (
-                    <tr>
-                      <td className="p-4 text-center text-muted-foreground" colSpan={8}>
-                        Sin ítems
-                      </td>
-                    </tr>
-                  )}
-                  {rows.map(({ it, unitPrice, qty, base, discount, discFrac, net, iva, gross }: any) => (
-                    <tr key={it.id} className="border-b last:border-b-0">
-                      <td className="p-2 align-middle">{it.productName ?? it.product?.name ?? "—"}</td>
-                      <td className="p-2 align-middle text-right tabular-nums">{fmtMoney(unitPrice)}</td>
-                      <td className="p-2 align-middle text-center tabular-nums">{qty}</td>
-                      <td className="p-2 align-middle text-right tabular-nums">
-                        {base > 0 && discFrac > 0 ? `${(discFrac * 100).toFixed(2)}%` : <span className="text-muted-foreground">—</span>}
-                      </td>
-                      <td className="p-2 align-middle text-right tabular-nums">
-                        {discount > 0 ? fmtMoney(discount) : <span className="text-muted-foreground">—</span>}
-                      </td>
-                      <td className="p-2 align-middle text-right tabular-nums">{fmtMoney(net)}</td>
-                      <td className="p-2 align-middle text-right tabular-nums">{fmtMoney(iva)}</td>
-                      <td className="p-2 align-middle text-right font-medium tabular-nums">{fmtMoney(gross)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Totales */}
-            <div className="p-3 border-t">
-              <div className="flex justify-end">
-                <div className="w-full sm:w-[460px] space-y-1">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Bruto (s/IVA)</span>
-                    <span className="tabular-nums">{fmtMoney(brutoSinIVA)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Descuentos</span>
-                    <span className="text-destructive tabular-nums">- {fmtMoney(descuentos)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Subtotal (s/IVA)</span>
-                    <span className="tabular-nums">{fmtMoney(subtotalSinIVA)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">IVA (21%)</span>
-                    <span className="tabular-nums">{fmtMoney(ivaTotal)}</span>
-                  </div>
-                  <div className="flex justify-between pt-2 border-t mt-2">
-                    <span className="font-semibold">Total (c/IVA)</span>
-                    <span className="font-semibold tabular-nums">{fmtMoney(displayedTotal)}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {(currentOrder as any)?.notes && (
-            <div className="rounded-lg border p-3">
-              <div className="text-xs text-muted-foreground mb-1">Notas</div>
-              <div className="whitespace-pre-wrap text-sm">{(currentOrder as any).notes}</div>
-            </div>
-          )}
+          </ScrollArea>
         </div>
 
-        {/* Footer */}
+        {/* Footer fijo */}
         <div className="border-t px-4 sm:px-6 py-3 flex justify-end">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cerrar
@@ -363,15 +392,12 @@ export const ViewOrderModal: React.FC<Props> = ({ open, onOpenChange, order, onS
           open={creditOpen}
           onOpenChange={(o) => {
             setCreditOpen(o);
-            // Al cerrar el modal de NC, refrescamos el pedido
             if (!o && currentOrder?.id) softRefresh(currentOrder.id);
           }}
           order={currentOrder}
           onCreated={async (id) => {
             toast({ title: "Nota de crédito generada", description: `ID: ${id}` });
-            // Refresco inmediato tras crear
             if (currentOrder?.id) await softRefresh(currentOrder.id);
-            // De seguridad por si hay leve latencia de DB
             setTimeout(() => {
               if (currentOrder?.id) softRefresh(currentOrder.id);
             }, 1200);

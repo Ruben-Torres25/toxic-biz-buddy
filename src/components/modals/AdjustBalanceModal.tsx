@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-// si tenés el componente de shadcn:
 import { Textarea } from "@/components/ui/textarea";
 
 type ClientLite = {
@@ -26,7 +25,7 @@ export interface AdjustBalanceModalProps {
   onConfirm: (args: { id: string; amount: number; reason?: string }) => Promise<void> | void;
 }
 
-type ActionKind = "payment" | "debt"; // payment = + , debt = -
+type ActionKind = "payment" | "debt"; // ✅ payment = -, debt = +
 
 const REASON_MAX = 140;
 
@@ -70,10 +69,10 @@ export default function AdjustBalanceModal({
     return Math.abs(n);
   }, [amount]);
 
-  // Mapeo: pago = +, deuda = -
+  // ✅ Mapeo correcto: pago = negativo, deuda = positivo
   const signedAmount = useMemo(() => {
     if (Number.isNaN(parsedAbsAmount)) return NaN;
-    return action === "payment" ? +parsedAbsAmount : -parsedAbsAmount;
+    return action === "payment" ? -parsedAbsAmount : +parsedAbsAmount;
   }, [parsedAbsAmount, action]);
 
   const canSubmit = useMemo(() => {
@@ -86,10 +85,27 @@ export default function AdjustBalanceModal({
     return currentBalance + signedAmount;
   }, [currentBalance, signedAmount]);
 
+  // ✅ Colores: rojo = deuda (positivo), verde = a favor (negativo)
   const balanceBadge = (value: number) => {
-    if (value > 0) return <Badge className="bg-success/10 text-success border-success/20">+${value.toFixed(2)}</Badge>;
-    if (value < 0) return <Badge className="bg-destructive/10 text-destructive border-destructive/20">${value.toFixed(2)}</Badge>;
-    return <Badge className="bg-muted/10 text-muted-foreground border-muted/20">$0.00</Badge>;
+    if (value > 0) {
+      return (
+        <Badge className="bg-destructive/10 text-destructive border-destructive/20">
+          +${value.toFixed(2)}
+        </Badge>
+      );
+    }
+    if (value < 0) {
+      return (
+        <Badge className="bg-success/10 text-success border-success/20">
+          -${Math.abs(value).toFixed(2)}
+        </Badge>
+      );
+    }
+    return (
+      <Badge className="bg-muted/10 text-muted-foreground border-muted/20">
+        $0.00
+      </Badge>
+    );
   };
 
   const handleApply = async () => {
@@ -98,7 +114,7 @@ export default function AdjustBalanceModal({
       setLoading(true);
       await onConfirm({
         id: client.id,
-        amount: signedAmount, // pago + / deuda -
+        amount: signedAmount, // ✅ pago (-) / deuda (+)
         reason: reason.trim() ? reason.trim() : undefined,
       });
       onOpenChange(false);
@@ -116,7 +132,6 @@ export default function AdjustBalanceModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* 👇 contenedor con altura máxima y scroll interno */}
       <DialogContent
         onKeyDown={onKeyDown}
         className="sm:max-w-md max-h-[85vh] overflow-y-auto"
@@ -136,6 +151,7 @@ export default function AdjustBalanceModal({
             <Button
               type="button"
               variant={action === "payment" ? "default" : "outline"}
+              className={action === "payment" ? "bg-success/10 text-success border-success/30" : ""}
               onClick={() => setAction("payment")}
             >
               Agregar pago
@@ -143,6 +159,7 @@ export default function AdjustBalanceModal({
             <Button
               type="button"
               variant={action === "debt" ? "default" : "outline"}
+              className={action === "debt" ? "bg-destructive/10 text-destructive border-destructive/30" : ""}
               onClick={() => setAction("debt")}
             >
               Agregar deuda
@@ -173,6 +190,7 @@ export default function AdjustBalanceModal({
                 placeholder="Ingresá un monto (ej: 1500.50)"
                 value={amount}
                 onChange={(e) => setAmount(sanitizeAmount(e.target.value))}
+                onFocus={(e) => e.currentTarget.select()}
               />
               {amount && Number.isNaN(parsedAbsAmount) && (
                 <p className="text-xs text-destructive mt-1">Ingresá un número válido.</p>
@@ -181,7 +199,8 @@ export default function AdjustBalanceModal({
                 <p className="text-xs text-muted-foreground mt-1">El monto debe ser mayor que 0.</p>
               )}
               <p className="text-xs text-muted-foreground mt-1">
-                Con <strong>Agregar pago</strong> el saldo <em>aumenta</em> (monto positivo). Con <strong>Agregar deuda</strong> el saldo <em>disminuye</em> (monto negativo).
+                Con <strong>Agregar pago</strong> el saldo <em>disminuye</em> (monto negativo). Con{" "}
+                <strong>Agregar deuda</strong> el saldo <em>aumenta</em> (monto positivo).
               </p>
             </div>
 
@@ -193,7 +212,6 @@ export default function AdjustBalanceModal({
                 </span>
               </div>
 
-              {/* 👇 Textarea que respeta márgenes y hace wrap */}
               <Textarea
                 id="reason"
                 placeholder="Ej: pago en efectivo / ajuste manual"

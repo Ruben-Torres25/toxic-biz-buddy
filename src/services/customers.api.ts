@@ -3,7 +3,7 @@ import { Customer } from '@/types/domain';
 
 export type CustomerMovementDTO = {
   id: string;
-  type: "payment" | "debt" | "adjust";
+  type: 'payment' | 'debt' | 'adjust';
   amount: number;
   reason?: string | null;
   createdAt: string | Date;
@@ -33,20 +33,29 @@ export class CustomersAPI {
   static adjustBalance(
     id: string,
     payload: { amount: number; reason?: string }
-  ): Promise<Customer> {
-    return api.post<Customer>(`/customers/${id}/adjust`, payload);
+  ): Promise<{ ok: true; balance: number }> {
+    return api.post<{ ok: true; balance: number }>(`/customers/${id}/adjust`, payload);
   }
 
-  // === NUEVO: stats
-  static getStats(id: string): Promise<{ orderCount: number; lastOrderDate: string | null }> {
-    return api.get<{ orderCount: number; lastOrderDate: string | null }>(`/customers/${id}/stats`);
+  /** Registrar pago (el backend setea fecha y devuelve balance actualizado) */
+  static createPayment(
+    id: string,
+    payload: { amount: number; method: 'cash' | 'debit' | 'credit' | 'transfer'; notes?: string }
+  ): Promise<{
+    ok: true;
+    customerId: string;
+    sourceId: string;
+    method: string;
+    amount: number;
+    createdAt: string;
+    balance: number;
+  }> {
+    return api.post(`/customers/${id}/payments`, payload);
   }
 
-  // Movimientos
   static async listMovements(customerId: string): Promise<CustomerMovementDTO[]> {
     const resp = await api.get<any>(`/customers/${customerId}/movements`);
     const data = resp as any;
-
     if (Array.isArray(data)) return data as CustomerMovementDTO[];
     if (data && typeof data === 'object') {
       if (Array.isArray(data.items)) return data.items as CustomerMovementDTO[];

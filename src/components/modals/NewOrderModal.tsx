@@ -15,6 +15,8 @@ interface NewOrderModalProps {
 export function NewOrderModal({ open, onOpenChange }: NewOrderModalProps) {
   const { toast } = useToast();
   const [orderItems, setOrderItems] = useState([{ product: "", quantity: 1, price: 0 }]);
+  // 👇 Descuento global (condición de venta)
+  const [discountGlobalPct, setDiscountGlobalPct] = useState<number>(0);
 
   const handleAddItem = () => {
     setOrderItems([...orderItems, { product: "", quantity: 1, price: 0 }]);
@@ -25,15 +27,21 @@ export function NewOrderModal({ open, onOpenChange }: NewOrderModalProps) {
   };
 
   const handleSubmit = () => {
+    // Si acá llamás a tu API, incluí:
+    // { discountGlobalPercent: discountGlobalPct, discountGlobal: discountAmount, total: total }
     toast({
       title: "Pedido Creado",
-      description: "El pedido ha sido registrado exitosamente.",
+      description: `Se registró el pedido. Descuento global: ${discountGlobalPct}%`,
     });
     onOpenChange(false);
     setOrderItems([{ product: "", quantity: 1, price: 0 }]);
+    setDiscountGlobalPct(0);
   };
 
-  const total = orderItems.reduce((sum, item) => sum + item.quantity * item.price, 0);
+  const subtotal = orderItems.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.price || 0), 0);
+  const clampedPct = Math.min(100, Math.max(0, Number.isFinite(discountGlobalPct) ? discountGlobalPct : 0));
+  const discountAmount = +(subtotal * (clampedPct / 100)).toFixed(2);
+  const total = subtotal - discountAmount;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -61,6 +69,20 @@ export function NewOrderModal({ open, onOpenChange }: NewOrderModalProps) {
               <Label htmlFor="date">Fecha de Entrega</Label>
               <Input id="date" type="date" />
             </div>
+          </div>
+
+          {/* Condición de venta: descuento global */}
+          <div>
+            <Label>Condición de venta (Descuento global %)</Label>
+            <Input
+              type="number"
+              min={0}
+              max={100}
+              step="0.5"
+              placeholder="0"
+              value={discountGlobalPct}
+              onChange={(e) => setDiscountGlobalPct(parseFloat(e.target.value || "0"))}
+            />
           </div>
 
           <div className="space-y-2">
@@ -115,7 +137,17 @@ export function NewOrderModal({ open, onOpenChange }: NewOrderModalProps) {
             </Button>
           </div>
 
-          <div className="border-t pt-4">
+          <div className="border-t pt-4 space-y-1">
+            <div className="flex justify-between text-sm">
+              <span>Subtotal:</span>
+              <span>${subtotal.toFixed(2)}</span>
+            </div>
+            {clampedPct > 0 && (
+              <div className="flex justify-between text-sm text-destructive">
+                <span>Descuento global ({clampedPct}%):</span>
+                <span>- ${discountAmount.toFixed(2)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-lg font-semibold">
               <span>Total:</span>
               <span>${total.toFixed(2)}</span>

@@ -32,6 +32,8 @@ import {
   LogOut,
   CheckCircle2,
   ListOrdered,
+  Banknote,
+  RotateCcw,
 } from "lucide-react";
 import type { PaymentMethod } from "@/types/sales";
 import type { Product } from "@/types/domain";
@@ -180,17 +182,56 @@ export const CashSection = () => {
         duration: 3000,
       });
       clearCart();
-      // ❌ No imprimimos
-      // window.print?.();
 
       // refrescar resumen y ventas del día
       qc.invalidateQueries({ queryKey: ["cash-current"] });
       qc.invalidateQueries({ queryKey: ["cash-movements"] });
-      qc.invalidateQueries({ queryKey: ["history-list"] });
+      qc.invalidateQueries({ queryKey: ["history-list"] }); // si lo usás
+      qc.invalidateQueries({ queryKey: ["cash", "daily"] }); // historia → caja por día
     },
     onError: (e: any) =>
       toast({
         title: "No se pudo confirmar",
+        description: e?.message ?? "Error",
+        variant: "destructive",
+      }),
+  });
+
+  // ====== NUEVO: Ingreso / Egreso rápido ======
+  const [showIncomeDialog, setShowIncomeDialog] = useState(false);
+  const [showExpenseDialog, setShowExpenseDialog] = useState(false);
+
+  const incomeMutation = useMutation({
+    mutationFn: async (args: { amount: number; description?: string }) =>
+      CashAPI.income({ amount: Math.abs(args.amount), description: args.description?.trim() || undefined }),
+    onSuccess: () => {
+      toast({ title: "Ingreso registrado" });
+      setShowIncomeDialog(false);
+      qc.invalidateQueries({ queryKey: ["cash-current"] });
+      qc.invalidateQueries({ queryKey: ["cash-movements"] });
+      qc.invalidateQueries({ queryKey: ["cash", "daily"] });
+    },
+    onError: (e: any) =>
+      toast({
+        title: "No se pudo registrar el ingreso",
+        description: e?.message ?? "Error",
+        variant: "destructive",
+      }),
+  });
+
+  const expenseMutation = useMutation({
+    mutationFn: async (args: { amount: number; description?: string }) =>
+      CashAPI.expense({ amount: Math.abs(args.amount), description: args.description?.trim() || undefined }),
+    onSuccess: () => {
+      toast({ title: "Egreso registrado" });
+      setShowExpenseDialog(false);
+      qc.invalidateQueries({ queryKey: ["cash-current"] });
+      qc.invalidateQueries({ queryKey: ["cash-movements"] });
+      qc.invalidateQueries({ queryKey: ["cash", "daily"] });
+    },
+    onError: (e: any) =>
+      toast({
+        title: "No se pudo registrar el egreso",
         description: e?.message ?? "Error",
         variant: "destructive",
       }),
@@ -229,7 +270,7 @@ export const CashSection = () => {
         </div>
 
         {/* Estado + acciones */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {loadingCur ? (
             <Badge variant="outline" className="border-muted/30 text-muted-foreground">
               Cargando…
@@ -258,18 +299,29 @@ export const CashSection = () => {
               />
             </AlertDialog>
           ) : (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="outline" data-testid="btn-close-cash">
-                  <LogOut className="w-4 h-4 mr-2" />
-                  Cerrar caja
-                </Button>
-              </AlertDialogTrigger>
-              <CloseCashDialog
-                onConfirm={(amount) => closeMutation.mutate(amount)}
-                isLoading={closeMutation.isPending}
-              />
-            </AlertDialog>
+            <>
+              <Button variant="secondary" onClick={() => setShowIncomeDialog(true)} title="Registrar ingreso">
+                <Banknote className="w-4 h-4 mr-2" />
+                Ingreso
+              </Button>
+              <Button variant="secondary" onClick={() => setShowExpenseDialog(true)} title="Registrar egreso">
+                <RotateCcw className="w-4 h-4 mr-2" />
+                Egreso
+              </Button>
+
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" data-testid="btn-close-cash">
+                    <LogOut className="w-4 h-4 mr-2" />
+                    Cerrar caja
+                  </Button>
+                </AlertDialogTrigger>
+                <CloseCashDialog
+                  onConfirm={(amount) => closeMutation.mutate(amount)}
+                  isLoading={closeMutation.isPending}
+                />
+              </AlertDialog>
+            </>
           )}
         </div>
       </div>
@@ -495,6 +547,25 @@ export const CashSection = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* NUEVOS: Modales Ingreso / Egreso */}
+      <QuickMovementDialog
+        open={showIncomeDialog}
+        onOpenChange={setShowIncomeDialog}
+        title="Registrar ingreso"
+        confirmLabel="Registrar ingreso"
+        loading={incomeMutation.isPending}
+        onConfirm={(amount, description) => incomeMutation.mutate({ amount, description })}
+      />
+
+      <QuickMovementDialog
+        open={showExpenseDialog}
+        onOpenChange={setShowExpenseDialog}
+        title="Registrar egreso"
+        confirmLabel="Registrar egreso"
+        loading={expenseMutation.isPending}
+        onConfirm={(amount, description) => expenseMutation.mutate({ amount, description })}
+      />
     </div>
   );
 };
@@ -576,5 +647,75 @@ function CloseCashDialog({
         </AlertDialogAction>
       </AlertDialogFooter>
     </AlertDialogContent>
+  );
+}
+
+/** Modal simple para Ingreso/Egreso */
+function QuickMovementDialog({
+  open,
+  onOpenChange,
+  title,
+  confirmLabel,
+  loading,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  confirmLabel: string;
+  loading: boolean;
+  onConfirm: (amount: number, description?: string) => void;
+}) {
+  const [amount, setAmount] = useState<number>(0);
+  const [desc, setDesc] = useState<string>("");
+
+  useEffect(() => {
+    if (!open) {
+      setAmount(0);
+      setDesc("");
+    }
+  }, [open]);
+
+  const canSave = amount > 0 && !loading;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md" aria-describedby={undefined}>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-sm text-muted-foreground">Importe</label>
+            <Input
+              type="number"
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(Math.max(0, Number(e.target.value || 0)))}
+              onFocus={(e) => e.currentTarget.select()}
+              placeholder="0.00"
+            />
+          </div>
+          <div>
+            <label className="text-sm text-muted-foreground">Descripción (opcional)</label>
+            <Input
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              placeholder="Ej: retiro a proveedor / aporte a caja"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+            Cancelar
+          </Button>
+          <Button onClick={() => onConfirm(amount, desc)} disabled={!canSave}>
+            {loading ? "Guardando…" : confirmLabel}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
